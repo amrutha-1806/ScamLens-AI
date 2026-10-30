@@ -1,0 +1,26 @@
+{
+  "project_name": "SCAMLENS AI",
+  "phase": 4,
+  "dataset_name": "UCI SMS Spam Collection",
+  "random_state": 42,
+  "test_size": 0.2,
+  "total_samples": 5574,
+  "train_samples": 4459,
+  "test_samples": 1115,
+  "feature_count": 10043,
+  "class_mapping": {
+    "0": "Legitimate",
+    "1": "Scam/Phishing"
+  },
+  "class_distribution_train": {
+    "legitimate": 3861,
+    "scam": 598
+  },
+  "class_distribution_test": {
+    "legitimate": 966,
+    "scam": 149
+  },
+  "selected_model": "Random Forest",
+  "selection_metric": "macro_f1",
+  "timestamp": "2026-09-21 21:32:01"
+}

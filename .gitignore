@@ -1,0 +1,49 @@
+﻿# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+env/
+
+# Secrets and environment configurations
+.env
+.env.*
+!.env.example
+
+# Local databases, caches, and logs
+*.db
+*.sqlite
+*.sqlite3
+logs/
+*.log
+scamlens.db
+
+# Node / Frontend
+node_modules/
+dist/
+dist-ssr/
+.output/
+.nitro/
+.wrangler/
+.vinxi/
+.tanstack/**
+*.local
+
+# Operating System & IDE
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Temporary / duplicate files
+data/raw/
+data/demo/
+*.tmp
+*.txt.txt
+"Intellingent scam and phishing detection system"/

@@ -1,0 +1,52 @@
+project:
+  name: "SCAMLENS AI"
+  version: "1.0.0"
+  description: "Intelligent Scam and Phishing Detection System"
+
+paths:
+  raw_data_dir: "data/raw"
+  processed_data_dir: "data/processed"
+  saved_models_dir: "saved_models"
+  logs_dir: "logs"
+  db_path: "scamlens.db"
+
+data:
+  test_size: 0.2
+  random_state: 42
+
+features:
+  tfidf_word:
+    ngram_range: [1, 2]
+    min_df: 2
+    max_df: 0.95
+    sublinear_tf: true
+    max_features: 5000
+  tfidf_char:
+    ngram_range: [3, 5]
+    min_df: 2
+    sublinear_tf: true
+    max_features: 5000
+  keywords:
+    urgency: ["urgent", "immediately", "hurry", "act now", "expires", "limited time", "action required", "alert", "locked", "instant"]
+    credential: ["account", "verify", "verification", "password", "login", "suspended", "security", "update", "banking", "access"]
+    financial: ["bank", "payment", "money", "cash", "refund", "transaction", "credit", "debit", "card", "transfer", "cost", "charge", "pound", "dollar"]
+    reward: ["winner", "won", "prize", "reward", "claim", "free", "gift", "guaranteed", "bonus", "cash prize"]
+    action: ["click", "call", "contact", "reply", "confirm", "verify", "visit", "sub", "text", "dial"]
+  url:
+    shorteners: ["bit.ly", "tinyurl.com", "t.co", "goo.gl", "ow.ly", "is.gd", "buff.ly", "adf.ly", "bitly.com", "tiny.cc"]
+    suspicious_tlds: [".zip", ".xyz", ".top", ".work", ".gq", ".cf", ".ml", ".ga", ".fit", ".icu", ".country", ".link", ".buzz", ".monster", ".online", ".site"]
+
+model_training:
+  test_size: 0.20
+  random_state: 42
+  selection_metric: macro_f1
+  class_weight: balanced
+
+risk:
+  low_max: 24.99
+  suspicious_max: 49.99
+  high_max: 74.99
+  very_high_min: 75.00
+
+database:
+  db_name: "scamlens.db"

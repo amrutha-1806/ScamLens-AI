@@ -1,0 +1,43 @@
+SCAMLENS AI — EDA SUMMARY
+=========================
+
+Dataset: UCI SMS Spam Collection
+Total Rows: 5574
+Total Columns: 6
+
+Class Distribution:
+-------------------
+Legitimate (ham):    4827 (86.60%)
+Scam/Phishing (spam): 747 (13.40%)
+
+Data Quality & Cleanliness:
+---------------------------
+Missing Values: 0
+Duplicate Messages: 403 (7.23%)
+
+Overall Message Length (Characters):
+-----------------------------------
+Mean:    80.48
+Median:  62.00
+Minimum: 2
+Maximum: 910
+
+Overall Word Count:
+-------------------
+Mean:    15.59
+Median:  12.00
+Minimum: 1
+Maximum: 171
+
+Class Comparison Statistics:
+----------------------------
+Legitimate Avg Char Length:  71.47
+Scam/Phishing Avg Char Length: 138.68
+Legitimate Avg Word Count:    14.30
+Scam/Phishing Avg Word Count:  23.91
+
+Frequent Keywords (Legitimate):
+can, so, not, will, how, no, now, just, ok, when
+
+Frequent Keywords (Scam/Phishing):
+free, now, txt, mobile, text, stop, claim, reply, www, prize

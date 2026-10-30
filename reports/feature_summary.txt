@@ -1,0 +1,77 @@
+SCAMLENS AI — FEATURE ENGINEERING SUMMARY
+==========================================
+
+Dataset: UCI SMS Spam Collection (5,574 samples)
+Total Feature Matrix Shape: (5574, 10043)
+Matrix Type: scipy.sparse.csr_matrix (Memory-efficient sparse representation)
+
+1. TF-IDF Word Features (5,000 features)
+----------------------------------------
+- N-gram range: (1, 2)
+- Min document frequency: 2
+- Max document frequency: 0.95
+- Sublinear TF scaling: Enabled
+- Max features: 5000
+
+2. TF-IDF Character Features (5,000 features)
+---------------------------------------------
+- Analyzer: Character
+- N-gram range: (3, 5)
+- Min document frequency: 2
+- Sublinear TF scaling: Enabled
+- Max features: 5000
+
+3. Text Statistical Features (17 features)
+------------------------------------------
+- character_count
+- word_count
+- digit_count
+- uppercase_count
+- lowercase_count
+- special_character_count
+- exclamation_count
+- question_mark_count
+- currency_symbol_count
+- newline_count
+- uppercase_ratio
+- digit_ratio
+- special_character_ratio
+- url_count
+- has_url
+- http_count
+- https_count
+
+4. Scam-Related Indicator Features (10 features)
+------------------------------------------------
+- urgency_keyword_count / has_urgency_keyword
+- credential_keyword_count / has_credential_keyword
+- financial_keyword_count / has_financial_keyword
+- reward_keyword_count / has_reward_keyword
+- action_keyword_count / has_action_keyword
+
+5. Static URL Lexical Features (16 features)
+--------------------------------------------
+- url_length
+- has_https
+- has_ip_address
+- has_at_symbol
+- dot_count
+- hyphen_count
+- underscore_count
+- slash_count
+- question_mark_count
+- ampersand_count
+- equals_count
+- digit_count
+- subdomain_count
+- query_length
+- path_length
+- contains_url_shortener
+- contains_suspicious_tld
+- contains_suspicious_keyword
+
+6. Scaler & Data Leakage Protections
+-------------------------------------
+- Scaler: MaxAbsScaler (Scales dense features [0, 1] without destroying sparse matrix structure)
+- Data Leakage Prevention: FeatureExtractor follows strict Scikit-learn fit() / transform() lifecycle.
+- Zero network interaction: URL extraction is 100% static string parsing.
