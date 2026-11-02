@@ -80,6 +80,61 @@ class TestUrlIntelligence(unittest.TestCase):
         self.assertIn("https://account-update.info/login", urls)
         self.assertIn("http://bit.ly/secure", urls)
 
+    def test_structural_checks_complete_dimensions(self):
+        """Verify that exactly 9 structural dimensions are returned with valid statuses."""
+        res = analyze_url_static("https://docs.python.org/3/library/index.html")
+        checks = res.get("structural_checks", [])
+        self.assertEqual(len(checks), 9)
+        expected_ids = [
+            "https_protocol",
+            "url_length_depth",
+            "domain_structure",
+            "subdomain_count",
+            "raw_ip_hostname",
+            "at_symbol_obfuscation",
+            "phishing_keywords",
+            "url_shortener_service",
+            "special_character_density",
+        ]
+        self.assertEqual([c["id"] for c in checks], expected_ids)
+        for c in checks:
+            self.assertIn(c["status"], ["Detected", "Not Detected", "Unable to Evaluate"])
+            self.assertTrue(len(c["explanation"]) > 10)
+
+    def test_5_sample_urls_evaluation(self):
+        """Test URL Analyzer logic on the 5 required sample URLs."""
+        # 1. Normal HTTPS URL
+        res_https = analyze_url_static("https://docs.python.org/3/library/index.html")
+        checks_https = {c["id"]: c for c in res_https["structural_checks"]}
+        self.assertEqual(checks_https["https_protocol"]["status"], "Not Detected")
+        self.assertIn("does NOT prove", checks_https["https_protocol"]["explanation"])
+        self.assertEqual(checks_https["raw_ip_hostname"]["status"], "Not Detected")
+
+        # 2. HTTP URL
+        res_http = analyze_url_static("http://example.com/login")
+        checks_http = {c["id"]: c for c in res_http["structural_checks"]}
+        self.assertEqual(checks_http["https_protocol"]["status"], "Detected")
+        self.assertEqual(checks_http["phishing_keywords"]["status"], "Detected")
+
+        # 3. URL containing suspicious keywords
+        res_kw = analyze_url_static("https://secure-account-verify-login.com/update")
+        checks_kw = {c["id"]: c for c in res_kw["structural_checks"]}
+        self.assertEqual(checks_kw["domain_structure"]["status"], "Detected")
+        self.assertEqual(checks_kw["phishing_keywords"]["status"], "Detected")
+
+        # 4. Raw IP address URL
+        res_ip = analyze_url_static("http://192.168.1.1/admin")
+        checks_ip = {c["id"]: c for c in res_ip["structural_checks"]}
+        self.assertEqual(checks_ip["raw_ip_hostname"]["status"], "Detected")
+        self.assertEqual(checks_ip["domain_structure"]["status"], "Unable to Evaluate")
+        self.assertEqual(checks_ip["subdomain_count"]["status"], "Unable to Evaluate")
+        self.assertEqual(checks_ip["url_shortener_service"]["status"], "Unable to Evaluate")
+
+        # 5. Shortened URL
+        res_short = analyze_url_static("https://bit.ly/3xY79aZ")
+        checks_short = {c["id"]: c for c in res_short["structural_checks"]}
+        self.assertEqual(checks_short["url_shortener_service"]["status"], "Detected")
+
 
 class TestExplainableAI(unittest.TestCase):
     """Test suite for explainable AI and token attribution."""

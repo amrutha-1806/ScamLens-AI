@@ -37,6 +37,7 @@ import {
   FileText,
   Filter,
   History,
+  Info,
   Layers,
   Link2,
   ListChecks,
@@ -64,7 +65,7 @@ import { ApiNotice, ChartEmpty, EmptyState, KpiCard, PageHeader, Panel } from ".
 import { ScamlensApiError, scamlensApi } from "@/lib/scamlens-api";
 import { useScamlensPreferences } from "@/lib/scamlens-preferences";
 import { healthQueryOptions, historyQueryOptions, modelInfoQueryOptions } from "@/lib/scamlens-queries";
-import type { AnalysisResult, BatchAnalysisResponse, ScanRecord } from "@/lib/scamlens-types";
+import type { AnalysisResult, BatchAnalysisResponse, ScanRecord, StructuralCheckResult } from "@/lib/scamlens-types";
 import { cn } from "@/lib/utils";
 
 const messageExamples = {
@@ -405,7 +406,6 @@ function HistoryBars({ records, mode }: { records: ScanRecord[]; mode: "risk" | 
 export function DashboardPage() {
   const { shouldReduceMotion } = useScamlensPreferences();
   const health = useQuery(healthQueryOptions());
-  const modelInfo = useQuery(modelInfoQueryOptions());
   const history = useQuery(historyQueryOptions());
 
   const connected = health.isSuccess && health.data.healthy;
@@ -414,7 +414,6 @@ export function DashboardPage() {
   const legitimate = records.filter((r) => r.prediction === "Legitimate").length;
   const high = records.filter((r) => r.riskLevel === "High" || r.riskLevel === "Very High").length;
   const note = history.isSuccess ? "From backend history" : history.isError ? "History unavailable" : "Awaiting backend data";
-  const latestScan = records[0];
 
   return (
     <div className="space-y-7">
@@ -446,131 +445,6 @@ export function DashboardPage() {
           </div>
         }
       />
-
-      {/* Compact Live AI Telemetry & Threat Pulse Banner (Theme-Adaptive for Light & Dark Mode) */}
-      <motion.section
-        initial={shouldReduceMotion ? false : { opacity: 0, y: 10 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: shouldReduceMotion ? 0 : 0.28, ease: "easeOut" }}
-        className="relative overflow-hidden rounded-xl border border-primary/25 bg-gradient-to-r from-sky-50/95 via-cyan-50/60 to-indigo-50/75 p-4 shadow-panel sm:p-5 dark:border-cyan-500/25 dark:from-[#07101F] dark:via-[#0A1628] dark:to-[#07101F]"
-      >
-        <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(to_right,rgba(14,165,233,0.06)_1px,transparent_1px),linear-gradient(to_bottom,rgba(14,165,233,0.06)_1px,transparent_1px)] bg-[size:24px_24px] dark:bg-[linear-gradient(to_right,rgba(56,189,248,0.04)_1px,transparent_1px),linear-gradient(to_bottom,rgba(56,189,248,0.04)_1px,transparent_1px)]" />
-        <div className="relative z-10 grid gap-4 lg:grid-cols-[1.3fr_1fr] lg:items-center lg:gap-5">
-          <div className="min-w-0 space-y-2.5">
-            <div className="inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-primary sm:text-[11px] dark:border-cyan-500/30 dark:bg-cyan-500/10 dark:text-cyan-300">
-              <Activity className="size-3.5 text-primary dark:text-cyan-400" />
-              Live Detection Pipeline Telemetry
-            </div>
-            <h2 className="text-base font-bold text-foreground sm:text-xl dark:text-slate-100">
-              {modelInfo.data?.model ?? "Random Forest (Class-Balanced)"} • 10,043 Static Features
-            </h2>
-            <p className="max-w-2xl text-xs leading-relaxed text-muted-foreground sm:text-sm dark:text-slate-300">
-              Real-time local inference combining word &amp; character TF-IDF n-grams with 43 lexical, urgency, and URL structural indicators. All URLs are inspected statically without network execution.
-            </p>
-            <div className="flex flex-wrap items-center gap-2 pt-1 text-[11px]">
-              <span className="rounded-md border border-border bg-card/90 px-2.5 py-1 font-mono font-semibold text-primary dark:border-slate-700 dark:bg-slate-900/90 dark:text-cyan-300">
-                Holdout Accuracy: 99.10%
-              </span>
-              <span className="rounded-md border border-border bg-card/90 px-2.5 py-1 font-mono font-semibold text-safe dark:border-slate-700 dark:bg-slate-900/90 dark:text-teal-300">
-                ROC-AUC: 0.9936
-              </span>
-              <span className="rounded-md border border-border bg-card/90 px-2.5 py-1 font-mono text-muted-foreground dark:border-slate-700 dark:bg-slate-900/90 dark:text-slate-300">
-                SQLite Audit Persistence: Active
-              </span>
-            </div>
-          </div>
-
-          {/* Right side: Latest Workspace Scan Pulse */}
-          <motion.div
-            whileHover={shouldReduceMotion ? { y: 0 } : { y: -2 }}
-            transition={{ duration: 0.2 }}
-            className="min-w-0 rounded-xl border border-border bg-card/90 p-3.5 shadow-2xs transition-colors hover:border-primary/40 sm:p-4 dark:border-slate-800 dark:bg-slate-950/85 dark:hover:border-cyan-500/35"
-          >
-            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border pb-2.5 dark:border-slate-800">
-              <span className="flex items-center gap-1.5 text-xs font-semibold text-foreground dark:text-slate-200">
-                <Radar className="size-4 text-primary dark:text-cyan-400" /> Latest Recorded Scan
-              </span>
-              {latestScan ? (
-                <span className={cn("rounded-full border px-2 py-0.5 text-[10px] font-semibold", badgeClassForRisk(latestScan.riskLevel))}>
-                  {latestScan.riskLevel} Risk ({formatProbability(latestScan.riskProbability)})
-                </span>
-              ) : (
-                <span className="text-[11px] text-muted-foreground dark:text-slate-400">No scans yet</span>
-              )}
-            </div>
-            {latestScan ? (
-              <div className="mt-3 space-y-2">
-                <p className="truncate text-xs font-medium text-foreground dark:text-slate-100">{latestScan.inputPreview}</p>
-                <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-muted-foreground dark:text-slate-400">
-                  <span className="font-semibold uppercase tracking-wider text-primary dark:text-cyan-400">{latestScan.inputType}</span>
-                  <span>Verdict: <strong className="text-foreground dark:text-slate-200">{latestScan.prediction}</strong></span>
-                  <span>{formatTime(latestScan.timestamp)}</span>
-                </div>
-              </div>
-            ) : (
-              <p className="mt-3 text-xs text-muted-foreground dark:text-slate-400">
-                Run a message, URL, or batch CSV scan to populate live telemetry.
-              </p>
-            )}
-          </motion.div>
-        </div>
-
-        {/* Visual 4-Stage Detection Pipeline Flow */}
-        <div className="relative z-10 mt-4 grid gap-2.5 border-t border-border/80 pt-4 sm:mt-5 sm:grid-cols-2 lg:grid-cols-4 dark:border-slate-800/80">
-          {[
-            {
-              step: "Stage 01",
-              title: "Input Sanitization",
-              detail: "SMS, Email, Static URL & CSV validation",
-              icon: MessageSquareText,
-            },
-            {
-              step: "Stage 02",
-              title: "10,043 Feature Vector",
-              detail: "Word/Char TF-IDF + 43 lexical signals",
-              icon: Layers,
-            },
-            {
-              step: "Stage 03",
-              title: "Random Forest Ensemble",
-              detail: "200 class-balanced decision trees",
-              icon: Cpu,
-            },
-            {
-              step: "Stage 04",
-              title: "Explainable Audit",
-              detail: "Risk tier, indicators & SQLite history",
-              icon: Database,
-            },
-          ].map((stage, index) => {
-            const StageIcon = stage.icon;
-            return (
-              <motion.div
-                key={stage.step}
-                initial={shouldReduceMotion ? false : { opacity: 0, y: 8 }}
-                animate={{ opacity: 1, y: 0 }}
-                whileHover={shouldReduceMotion ? { y: 0 } : { y: -2 }}
-                transition={{
-                  duration: shouldReduceMotion ? 0 : 0.22,
-                  delay: shouldReduceMotion ? 0 : 0.06 + index * 0.04,
-                }}
-                className="flex min-w-0 items-start gap-3 rounded-lg border border-border bg-card/85 p-3 transition-colors hover:border-primary/45 dark:border-slate-800/90 dark:bg-slate-950/60 dark:hover:border-cyan-500/40"
-              >
-                <span className="grid size-8 shrink-0 place-items-center rounded-md border border-primary/25 bg-primary/10 text-primary dark:border-cyan-500/25 dark:bg-cyan-500/10 dark:text-cyan-300">
-                  <StageIcon className="size-4" />
-                </span>
-                <div className="min-w-0">
-                  <p className="font-mono text-[10px] font-semibold uppercase tracking-wider text-primary dark:text-cyan-400">
-                    {stage.step}
-                  </p>
-                  <p className="truncate text-xs font-semibold text-foreground dark:text-slate-100">{stage.title}</p>
-                  <p className="mt-0.5 truncate text-[11px] text-muted-foreground dark:text-slate-400">{stage.detail}</p>
-                </div>
-              </motion.div>
-            );
-          })}
-        </div>
-      </motion.section>
 
       {/* 4 Primary KPI Cards */}
       <div className="grid gap-3.5 sm:grid-cols-2 sm:gap-4 xl:grid-cols-4">
@@ -993,17 +867,145 @@ export function MessageAnalyzerPage() {
 // ============================================================================
 // 3. URL ANALYZER PAGE
 // ============================================================================
-const urlChecks = [
-  ["HTTPS Protocol", LockKeyhole, "Checks whether transport uses TLS (https://) or plain HTTP"],
-  ["URL Length & Depth", CircleGauge, "Detects abnormally long URLs used to hide deceptive paths"],
-  ["Domain Structure", Network, "Evaluates primary domain tokens and hyphens"],
-  ["Subdomain Count", ListChecks, "Flags excessive subdomain chaining (e.g. login.secure.bank.example)"],
-  ["Raw IP Hostname", Search, "Detects numeric IPv4 addresses replacing domain names"],
-  ["@ Symbol Obfuscation", AlertTriangle, "Checks for credential-prefix redirects (@ in URL authority)"],
-  ["Phishing Keywords", ShieldAlert, "Scans for verify, login, update, kyc, claim, reward, free"],
-  ["URL Shortener Service", Link2, "Identifies bit.ly, tinyurl, t.co, and masked redirects"],
-  ["Special Character Density", FileSearch, "Measures digits, query parameters, and encoded symbols"],
-] as const;
+const urlCheckIcons: Record<string, React.ComponentType<{ className?: string }>> = {
+  https_protocol: LockKeyhole,
+  url_length_depth: CircleGauge,
+  domain_structure: Network,
+  subdomain_count: ListChecks,
+  raw_ip_hostname: Search,
+  at_symbol_obfuscation: AlertTriangle,
+  phishing_keywords: ShieldAlert,
+  url_shortener_service: Link2,
+  special_character_density: FileSearch,
+};
+
+function getEffectiveStructuralChecks(result: AnalysisResult | null): StructuralCheckResult[] {
+  if (!result) return [];
+  if (result.urlIntelligence?.structural_checks && result.urlIntelligence.structural_checks.length > 0) {
+    return result.urlIntelligence.structural_checks;
+  }
+  const intel = result.urlIntelligence;
+  const comp = intel?.components;
+  const metrics = intel?.metrics;
+  const findings = intel?.findings ?? [];
+  const findingCodes = new Set(findings.map((f) => f.code));
+
+  const isIp = Boolean(comp?.is_ip_address);
+  const scheme = (comp?.scheme || "").toLowerCase();
+  const schemeSupplied = Boolean(comp?.scheme_supplied);
+
+  return [
+    {
+      id: "https_protocol",
+      name: "HTTPS Protocol",
+      status: !schemeSupplied
+        ? "Unable to Evaluate"
+        : scheme === "http"
+        ? "Detected"
+        : scheme === "https"
+        ? "Not Detected"
+        : "Unable to Evaluate",
+      severity: scheme === "http" ? "warning" : scheme === "https" ? "safe" : "info",
+      explanation: !schemeSupplied
+        ? "No web scheme (http:// or https://) was supplied; transport security cannot be verified."
+        : scheme === "http"
+        ? "Unencrypted HTTP scheme detected. Data is sent in cleartext without TLS encryption, vulnerable to interception or tampering."
+        : "Uses HTTPS encryption for data in transit. Important: HTTPS secures connection encryption only; it does NOT prove that the destination website or owner is legitimate or safe.",
+    },
+    {
+      id: "url_length_depth",
+      name: "URL Length & Depth",
+      status: (metrics?.url_length ?? 0) > 100 || findingCodes.has("long_url") || findingCodes.has("path_double_slash")
+        ? "Detected"
+        : "Not Detected",
+      severity: (metrics?.url_length ?? 0) > 100 ? "warning" : "safe",
+      explanation: (metrics?.url_length ?? 0) > 100
+        ? `Abnormal URL length (${metrics?.url_length} characters). Deceptive links often use excessive length to obscure domains.`
+        : `URL length (${metrics?.url_length ?? "standard"} chars) and path depth are within normal boundaries.`,
+    },
+    {
+      id: "domain_structure",
+      name: "Domain Structure",
+      status: isIp
+        ? "Unable to Evaluate"
+        : findingCodes.has("typosquatting") || findingCodes.has("brand_impersonation") || findingCodes.has("many_hyphens") || findingCodes.has("high_entropy") || findingCodes.has("suspicious_tld")
+        ? "Detected"
+        : "Not Detected",
+      severity: findingCodes.has("typosquatting") || findingCodes.has("brand_impersonation") ? "danger" : findingCodes.has("many_hyphens") ? "warning" : isIp ? "info" : "safe",
+      explanation: isIp
+        ? "Domain structure analysis is not applicable because the target host is a numeric IP address."
+        : findingCodes.has("typosquatting") || findingCodes.has("brand_impersonation")
+        ? "Suspicious domain structure detected imitating or impersonating a known brand."
+        : "Domain structure adheres to standard conventions with expected character entropy.",
+    },
+    {
+      id: "subdomain_count",
+      name: "Subdomain Count",
+      status: isIp
+        ? "Unable to Evaluate"
+        : (comp?.subdomain_count ?? 0) >= 3 || findingCodes.has("deep_subdomains")
+        ? "Detected"
+        : "Not Detected",
+      severity: (comp?.subdomain_count ?? 0) >= 3 ? "warning" : isIp ? "info" : "safe",
+      explanation: isIp
+        ? "Subdomain count is not applicable to numeric IP addresses."
+        : (comp?.subdomain_count ?? 0) >= 3
+        ? `Excessive subdomain nesting (${comp?.subdomain_count} levels). Multi-level subdomains are often used to conceal real domains.`
+        : `Subdomain count (${comp?.subdomain_count ?? 0} levels) is within standard operational range.`,
+    },
+    {
+      id: "raw_ip_hostname",
+      name: "Raw IP Hostname",
+      status: isIp ? "Detected" : "Not Detected",
+      severity: isIp ? "danger" : "safe",
+      explanation: isIp
+        ? `Host is a raw numerical IP address (${comp?.ip_address ?? comp?.host}). Legitimate services rarely use raw numeric IPs.`
+        : `Host uses a registered domain name ('${comp?.host ?? ""}'), not a raw IP address.`,
+    },
+    {
+      id: "at_symbol_obfuscation",
+      name: "@ Symbol Obfuscation",
+      status: findingCodes.has("userinfo_at") ? "Detected" : "Not Detected",
+      severity: findingCodes.has("userinfo_at") ? "danger" : "safe",
+      explanation: findingCodes.has("userinfo_at")
+        ? "Deceptive '@' symbol in address authority. Browsers disregard text before '@' and route to the host that follows."
+        : "No '@' symbol credential obfuscation detected in the address authority.",
+    },
+    {
+      id: "phishing_keywords",
+      name: "Phishing Keywords",
+      status: findingCodes.has("credential_keywords") ? "Detected" : "Not Detected",
+      severity: findingCodes.has("credential_keywords") ? "warning" : "safe",
+      explanation: findingCodes.has("credential_keywords")
+        ? "Detected sensitive phishing keywords commonly leveraged in credential-harvesting lures."
+        : "No typical phishing or credential-harvesting keywords found in the URL.",
+    },
+    {
+      id: "url_shortener_service",
+      name: "URL Shortener Service",
+      status: isIp
+        ? "Unable to Evaluate"
+        : metrics?.is_shortener || findingCodes.has("url_shortener")
+        ? "Detected"
+        : "Not Detected",
+      severity: metrics?.is_shortener ? "warning" : isIp ? "info" : "safe",
+      explanation: isIp
+        ? "Shortener detection is not applicable to numeric IP addresses."
+        : metrics?.is_shortener
+        ? "Identified as a known URL shortening service that conceals the true destination."
+        : "Domain is a direct host name, not an identified URL shortening service.",
+    },
+    {
+      id: "special_character_density",
+      name: "Special Character Density",
+      status: findingCodes.has("encoded_host") || findingCodes.has("embedded_redirect") ? "Detected" : "Not Detected",
+      severity: findingCodes.has("encoded_host") ? "warning" : "safe",
+      explanation: findingCodes.has("encoded_host") || findingCodes.has("embedded_redirect")
+        ? "High density of special characters or encoded parameters detected, often used to bypass filters."
+        : "Special character count and encoding patterns are within normal distributions.",
+    },
+  ];
+}
 
 export function UrlAnalyzerPage() {
   const { shouldReduceMotion } = useScamlensPreferences();
@@ -1147,42 +1149,90 @@ export function UrlAnalyzerPage() {
           description="9 structural dimensions inspected by the Python URL feature extractor."
           delay={0.08}
         >
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {urlChecks.map(([label, Icon, desc], idx) => (
-              <motion.div
-                key={label}
-                initial={shouldReduceMotion ? false : { opacity: 0, y: 8 }}
-                animate={{ opacity: 1, y: 0 }}
-                whileHover={shouldReduceMotion ? { y: 0 } : { y: -2 }}
-                transition={{
-                  duration: shouldReduceMotion ? 0 : 0.22,
-                  delay: shouldReduceMotion ? 0 : idx * 0.03,
-                }}
-                className={cn(
-                  "flex flex-col justify-between rounded-lg border p-3.5 transition-all duration-200 hover:border-primary/40",
-                  result
-                    ? "border-primary/30 bg-primary/5 shadow-[0_0_18px_-8px_rgba(56,189,248,0.25)]"
-                    : "border-border bg-secondary/30"
-                )}
-              >
-                <div className="flex items-center justify-between gap-2">
-                  <Icon className="size-4 text-primary" />
-                  <span
+          {!result ? (
+            <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border/80 bg-secondary/15 py-12 px-4 text-center">
+              <div className="grid size-12 place-items-center rounded-xl border border-primary/20 bg-primary/10 text-primary mb-3">
+                <Link2 className="size-6" />
+              </div>
+              <h4 className="text-sm font-semibold text-foreground">Enter a URL to begin security analysis.</h4>
+              <p className="mt-1.5 max-w-md text-xs text-muted-foreground leading-relaxed">
+                SCAMLENS AI evaluates 9 structural and lexical dimensions statically using Python pattern recognition, with zero network execution or web requests.
+              </p>
+            </div>
+          ) : (
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {getEffectiveStructuralChecks(result).map((check, idx) => {
+                const Icon = urlCheckIcons[check.id] ?? ShieldCheck;
+                const isDetected = check.status === "Detected";
+                const isSafe = check.status === "Not Detected";
+
+                return (
+                  <motion.div
+                    key={check.id}
+                    initial={shouldReduceMotion ? false : { opacity: 0, y: 8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    whileHover={shouldReduceMotion ? { y: 0 } : { y: -2 }}
+                    transition={{
+                      duration: shouldReduceMotion ? 0 : 0.22,
+                      delay: shouldReduceMotion ? 0 : idx * 0.03,
+                    }}
                     className={cn(
-                      "rounded px-1.5 py-0.5 text-[10px] font-semibold transition-colors",
-                      result ? "bg-safe/15 text-safe" : "bg-secondary text-muted-foreground"
+                      "flex flex-col justify-between rounded-lg border p-3.5 transition-all duration-200",
+                      isDetected
+                        ? check.severity === "danger"
+                          ? "border-danger/40 bg-danger/5 shadow-[0_0_15px_-6px_rgba(244,63,94,0.18)]"
+                          : "border-warning/40 bg-warning/5 shadow-[0_0_15px_-6px_rgba(245,158,11,0.18)]"
+                        : isSafe
+                        ? "border-safe/30 bg-safe/5"
+                        : "border-border bg-secondary/25"
                     )}
                   >
-                    {result ? "Evaluated" : "Standby"}
-                  </span>
-                </div>
-                <div className="mt-2.5">
-                  <p className="text-xs font-semibold text-foreground">{label}</p>
-                  <p className="mt-1 text-[11px] leading-snug text-muted-foreground">{desc}</p>
-                </div>
-              </motion.div>
-            ))}
-          </div>
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <Icon
+                          className={cn(
+                            "size-4 shrink-0",
+                            isDetected
+                              ? check.severity === "danger"
+                                ? "text-danger"
+                                : "text-warning"
+                              : isSafe
+                              ? "text-safe"
+                              : "text-muted-foreground"
+                          )}
+                        />
+                        <span className="text-xs font-semibold text-foreground">{check.name}</span>
+                      </div>
+                      <span
+                        className={cn(
+                          "inline-flex items-center gap-1 rounded px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider transition-colors",
+                          isDetected
+                            ? check.severity === "danger"
+                              ? "border border-danger/30 bg-danger/15 text-danger"
+                              : "border border-warning/30 bg-warning/15 text-warning"
+                            : isSafe
+                            ? "border border-safe/30 bg-safe/15 text-safe"
+                            : "border border-border bg-secondary text-muted-foreground"
+                        )}
+                      >
+                        {isDetected ? (
+                          <AlertTriangle className="size-2.5" />
+                        ) : isSafe ? (
+                          <CheckCircle2 className="size-2.5" />
+                        ) : (
+                          <Info className="size-2.5" />
+                        )}
+                        {check.status}
+                      </span>
+                    </div>
+                    <p className="mt-2.5 text-[11px] leading-relaxed text-muted-foreground">
+                      {check.explanation}
+                    </p>
+                  </motion.div>
+                );
+              })}
+            </div>
+          )}
         </Panel>
 
         <Panel title="URL Risk Assessment" description="Classification verdict, indicators, and security recommendation." delay={0.12}>

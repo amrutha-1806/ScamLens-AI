@@ -22,6 +22,15 @@ from collections import Counter
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import parse_qsl, unquote, urlsplit
 
+try:
+    from src.features.url_features import extract_url_lexical_features, SUSPICIOUS_KEYWORDS
+except ImportError:
+    try:
+        from features.url_features import extract_url_lexical_features, SUSPICIOUS_KEYWORDS
+    except ImportError:
+        extract_url_lexical_features = None
+        SUSPICIOUS_KEYWORDS = ["login", "verify", "account", "secure", "update", "bank", "claim", "prize", "wp-content", "confirm", "free"]
+
 ENGINE_NAME = "Static URL heuristic engine (rule-based, no network access)"
 MAX_URL_LENGTH = 2048
 
@@ -160,6 +169,328 @@ def _decode_punycode(host: str) -> Optional[str]:
         return None
 
 
+def compute_structural_checks(
+    url: str,
+    intel_result: Dict[str, Any],
+    lexical: Optional[Dict[str, float]] = None,
+) -> List[Dict[str, Any]]:
+    """
+    Evaluate the 9 static lexical & structural checks for the URL string.
+    Zero network interaction. Pure offline string inspection.
+
+    Allowed statuses: "Detected" | "Not Detected" | "Unable to Evaluate"
+    """
+    checks: List[Dict[str, Any]] = []
+
+    is_valid = bool(intel_result.get("valid", False))
+    components = intel_result.get("components") or {}
+    metrics = intel_result.get("metrics") or {}
+    findings = intel_result.get("findings") or []
+    finding_codes = {f.get("code") for f in findings if isinstance(f, dict)}
+    brand_match = intel_result.get("brand_match") or {}
+
+    scheme = (components.get("scheme") or "").lower()
+    scheme_supplied = bool(components.get("scheme_supplied", False))
+    host = components.get("host") or ""
+    reg_domain = components.get("registrable_domain") or host
+    is_ip = bool(components.get("is_ip_address", False))
+    ip_addr = components.get("ip_address") or host
+    subdomain_count = int(components.get("subdomain_count") or 0)
+    url_length = int(metrics.get("url_length") or len(url))
+    path = components.get("path") or ""
+    path_segments = [p for p in path.split("/") if p]
+    path_depth = len(path_segments)
+    entropy = float(metrics.get("domain_entropy_bits") or 0.0)
+    hyphen_count = int(metrics.get("hyphen_count_in_host") or host.count("-"))
+    is_shortener = bool(metrics.get("is_shortener", False)) or ("url_shortener" in finding_codes)
+
+    # 1. HTTPS Protocol
+    # Clarification: HTTPS secures connection encryption only; it does NOT prove a website is safe.
+    if not is_valid and not scheme_supplied:
+        checks.append({
+            "id": "https_protocol",
+            "name": "HTTPS Protocol",
+            "status": "Unable to Evaluate",
+            "severity": "info",
+            "explanation": "No protocol scheme (http:// or https://) was provided in the input URL; transport security cannot be verified statically.",
+        })
+    elif not scheme_supplied:
+        checks.append({
+            "id": "https_protocol",
+            "name": "HTTPS Protocol",
+            "status": "Unable to Evaluate",
+            "severity": "info",
+            "explanation": "No web scheme (http:// or https://) was explicitly supplied. Transport encryption status cannot be confirmed.",
+        })
+    elif scheme == "http":
+        checks.append({
+            "id": "https_protocol",
+            "name": "HTTPS Protocol",
+            "status": "Detected",
+            "severity": "warning",
+            "explanation": "Unencrypted HTTP scheme detected. Data is sent in cleartext without TLS encryption, vulnerable to interception or tampering.",
+        })
+    elif scheme == "https":
+        checks.append({
+            "id": "https_protocol",
+            "name": "HTTPS Protocol",
+            "status": "Not Detected",
+            "severity": "safe",
+            "explanation": "Uses HTTPS encryption for data in transit. Important: HTTPS secures connection encryption only; it does NOT prove that the destination website or owner is legitimate or safe.",
+        })
+    else:
+        checks.append({
+            "id": "https_protocol",
+            "name": "HTTPS Protocol",
+            "status": "Unable to Evaluate",
+            "severity": "info",
+            "explanation": f"Non-web scheme '{scheme}:' detected; HTTPS status cannot be evaluated.",
+        })
+
+    # 2. URL Length & Depth
+    if url_length > 100 or path_depth >= 4 or "long_url" in finding_codes or "path_double_slash" in finding_codes:
+        depth_str = f"{path_depth} path level{'s' if path_depth != 1 else ''}"
+        checks.append({
+            "id": "url_length_depth",
+            "name": "URL Length & Depth",
+            "status": "Detected",
+            "severity": "warning",
+            "explanation": f"Abnormal length or depth ({url_length} characters, {depth_str}). Deceptive links frequently use excessive length or deep subpaths to hide the real domain on smaller screens.",
+        })
+    else:
+        depth_str = f"{path_depth} path level{'s' if path_depth != 1 else ''}"
+        checks.append({
+            "id": "url_length_depth",
+            "name": "URL Length & Depth",
+            "status": "Not Detected",
+            "severity": "safe",
+            "explanation": f"URL length ({url_length} characters) and path depth ({depth_str}) are within standard boundaries.",
+        })
+
+    # 3. Domain Structure
+    if not is_valid and not host:
+        checks.append({
+            "id": "domain_structure",
+            "name": "Domain Structure",
+            "status": "Unable to Evaluate",
+            "severity": "info",
+            "explanation": "No valid domain or host could be identified to inspect domain structure.",
+        })
+    elif is_ip:
+        checks.append({
+            "id": "domain_structure",
+            "name": "Domain Structure",
+            "status": "Unable to Evaluate",
+            "severity": "info",
+            "explanation": "Domain structure analysis is not applicable because the target host is a numeric IP address rather than a domain name.",
+        })
+    else:
+        domain_issues = []
+        if "typosquatting" in finding_codes:
+            domain_issues.append(f"possible typosquat of '{brand_match.get('brand', 'brand')}'")
+        if "brand_impersonation" in finding_codes:
+            domain_issues.append(f"brand name '{brand_match.get('brand', 'brand')}' on unauthorized domain '{reg_domain}'")
+        if "idn_homograph" in finding_codes:
+            domain_issues.append("internationalized/punycode look-alike characters")
+        if "many_hyphens" in finding_codes:
+            domain_issues.append(f"{hyphen_count} hyphens in host")
+        if "high_entropy" in finding_codes:
+            domain_issues.append(f"high character entropy ({entropy} bits/char)")
+        if "suspicious_tld" in finding_codes:
+            domain_issues.append(f"frequently abused .{components.get('tld', '')} TLD")
+
+        if domain_issues:
+            checks.append({
+                "id": "domain_structure",
+                "name": "Domain Structure",
+                "status": "Detected",
+                "severity": "danger" if any(f.get("severity") == "high" for f in findings if isinstance(f, dict) and f.get("code") in ("typosquatting", "brand_impersonation", "idn_homograph")) else "warning",
+                "explanation": f"Suspicious domain structure detected: {'; '.join(domain_issues)}.",
+            })
+        else:
+            checks.append({
+                "id": "domain_structure",
+                "name": "Domain Structure",
+                "status": "Not Detected",
+                "severity": "safe",
+                "explanation": f"Domain name ('{reg_domain}') follows standard naming conventions with normal entropy ({entropy} bits/char).",
+            })
+
+    # 4. Subdomain Count
+    if not is_valid and not host:
+        checks.append({
+            "id": "subdomain_count",
+            "name": "Subdomain Count",
+            "status": "Unable to Evaluate",
+            "severity": "info",
+            "explanation": "Unable to evaluate subdomains without a valid host.",
+        })
+    elif is_ip:
+        checks.append({
+            "id": "subdomain_count",
+            "name": "Subdomain Count",
+            "status": "Unable to Evaluate",
+            "severity": "info",
+            "explanation": "Subdomain count is not applicable to numeric IP addresses.",
+        })
+    elif subdomain_count >= 3 or "deep_subdomains" in finding_codes:
+        checks.append({
+            "id": "subdomain_count",
+            "name": "Subdomain Count",
+            "status": "Detected",
+            "severity": "warning",
+            "explanation": f"Excessive subdomain nesting detected ({subdomain_count} subdomain levels). Phishing links often chain subdomains to push the authentic domain off the screen.",
+        })
+    else:
+        checks.append({
+            "id": "subdomain_count",
+            "name": "Subdomain Count",
+            "status": "Not Detected",
+            "severity": "safe",
+            "explanation": f"Subdomain count ({subdomain_count} level{'s' if subdomain_count != 1 else ''}) is within normal operational parameters.",
+        })
+
+    # 5. Raw IP Hostname
+    if is_ip:
+        checks.append({
+            "id": "raw_ip_hostname",
+            "name": "Raw IP Hostname",
+            "status": "Detected",
+            "severity": "danger",
+            "explanation": f"Host is a raw numerical IP address ({ip_addr}) instead of a domain name. Legitimate organizations rarely instruct users to navigate to raw IP addresses.",
+        })
+    elif not is_valid and not host:
+        checks.append({
+            "id": "raw_ip_hostname",
+            "name": "Raw IP Hostname",
+            "status": "Unable to Evaluate",
+            "severity": "info",
+            "explanation": "No host was identified to determine if an IP address is present.",
+        })
+    else:
+        checks.append({
+            "id": "raw_ip_hostname",
+            "name": "Raw IP Hostname",
+            "status": "Not Detected",
+            "severity": "safe",
+            "explanation": f"Host uses a registered domain name ('{host}'), not a raw IP address.",
+        })
+
+    # 6. @ Symbol Obfuscation
+    if "@" in url or "userinfo_at" in finding_codes:
+        checks.append({
+            "id": "at_symbol_obfuscation",
+            "name": "@ Symbol Obfuscation",
+            "status": "Detected",
+            "severity": "danger",
+            "explanation": "Deceptive '@' symbol detected in the address authority. Browsers disregard text before '@' and route to the host that follows, disguising the true destination.",
+        })
+    else:
+        checks.append({
+            "id": "at_symbol_obfuscation",
+            "name": "@ Symbol Obfuscation",
+            "status": "Not Detected",
+            "severity": "safe",
+            "explanation": "No '@' symbol credential obfuscation detected in the address authority.",
+        })
+
+    # 7. Phishing Keywords
+    matched_keywords = set()
+    url_lower = url.lower()
+    for kw in SUSPICIOUS_PATH_KEYWORDS:
+        if kw in url_lower:
+            matched_keywords.add(kw)
+    for kw in SUSPICIOUS_KEYWORDS:
+        if kw in url_lower:
+            matched_keywords.add(kw)
+
+    if matched_keywords:
+        kw_str = ", ".join(sorted(matched_keywords)[:6])
+        checks.append({
+            "id": "phishing_keywords",
+            "name": "Phishing Keywords",
+            "status": "Detected",
+            "severity": "warning",
+            "explanation": f"Detected sensitive phishing keywords ({kw_str}) commonly leveraged in credential-harvesting or account verification lures.",
+        })
+    else:
+        checks.append({
+            "id": "phishing_keywords",
+            "name": "Phishing Keywords",
+            "status": "Not Detected",
+            "severity": "safe",
+            "explanation": "No typical phishing or credential-harvesting keywords found in the URL.",
+        })
+
+    # 8. URL Shortener Service
+    if not is_valid and not host:
+        checks.append({
+            "id": "url_shortener_service",
+            "name": "URL Shortener Service",
+            "status": "Unable to Evaluate",
+            "severity": "info",
+            "explanation": "Unable to evaluate URL shorteners without a valid host.",
+        })
+    elif is_ip:
+        checks.append({
+            "id": "url_shortener_service",
+            "name": "URL Shortener Service",
+            "status": "Unable to Evaluate",
+            "severity": "info",
+            "explanation": "Shortener detection is not applicable to numeric IP addresses.",
+        })
+    elif is_shortener:
+        checks.append({
+            "id": "url_shortener_service",
+            "name": "URL Shortener Service",
+            "status": "Detected",
+            "severity": "warning",
+            "explanation": f"'{reg_domain}' is a known URL shortening service that conceals the true destination without revealing where it leads.",
+        })
+    else:
+        checks.append({
+            "id": "url_shortener_service",
+            "name": "URL Shortener Service",
+            "status": "Not Detected",
+            "severity": "safe",
+            "explanation": f"Host ('{reg_domain}') is a direct domain name, not an identified URL shortening or masking service.",
+        })
+
+    # 9. Special Character Density
+    special_symbols = sum(url.count(c) for c in ['-', '_', '&', '=', '?', '%', '/', '.', '@', '+', ':'])
+    digits_in_host = metrics.get("digit_count_in_host", 0)
+    has_encoded_host = "encoded_host" in finding_codes
+    has_redirect = "embedded_redirect" in finding_codes
+
+    if has_encoded_host or has_redirect or special_symbols > 14 or (digits_in_host >= 4 and not is_ip):
+        detail_reasons = []
+        if has_encoded_host:
+            detail_reasons.append("percent-encoded host characters")
+        if has_redirect:
+            detail_reasons.append("embedded redirect parameters")
+        if special_symbols > 14:
+            detail_reasons.append(f"{special_symbols} special symbols")
+        if digits_in_host >= 4 and not is_ip:
+            detail_reasons.append(f"{digits_in_host} numeric digits in host")
+        checks.append({
+            "id": "special_character_density",
+            "name": "Special Character Density",
+            "status": "Detected",
+            "severity": "warning",
+            "explanation": f"High density of special characters or parameters ({'; '.join(detail_reasons)}), often used to evade security filters or conceal targets.",
+        })
+    else:
+        checks.append({
+            "id": "special_character_density",
+            "name": "Special Character Density",
+            "status": "Not Detected",
+            "severity": "safe",
+            "explanation": f"Special character count ({special_symbols} symbols) and encoding patterns are within normal web link distributions.",
+        })
+
+    return checks
+
+
 def analyze_url_static(raw_url: str) -> Dict[str, Any]:
     """
     Decompose a URL string and evaluate static lexical warning signs.
@@ -179,6 +510,8 @@ def analyze_url_static(raw_url: str) -> Dict[str, Any]:
         "findings": [],
         "heuristic_level": "Not assessed",
         "heuristic_score": 0,
+        "structural_checks": [],
+        "lexical_features": None,
         "disclaimer": (
             "Heuristic indicators are rule-based observations about the URL text. "
             "They are not Random Forest model output and do not confirm that a site is malicious. "
@@ -188,6 +521,7 @@ def analyze_url_static(raw_url: str) -> Dict[str, Any]:
 
     if raw_url is None:
         result["error"] = "No URL provided."
+        result["structural_checks"] = compute_structural_checks("", result, None)
         return result
 
     url = str(raw_url).strip()
@@ -196,12 +530,15 @@ def analyze_url_static(raw_url: str) -> Dict[str, Any]:
     result["input"] = url[:MAX_URL_LENGTH]
     if not url:
         result["error"] = "No URL provided."
+        result["structural_checks"] = compute_structural_checks("", result, None)
         return result
     if len(url) > MAX_URL_LENGTH:
         result["error"] = f"URL exceeds the {MAX_URL_LENGTH}-character limit."
+        result["structural_checks"] = compute_structural_checks(url, result, None)
         return result
     if any(ch.isspace() for ch in url):
         result["error"] = "URL contains whitespace and cannot be parsed as a single address."
+        result["structural_checks"] = compute_structural_checks(url, result, None)
         return result
 
     scheme_supplied = bool(_SCHEME_RE.match(url))
@@ -211,6 +548,7 @@ def analyze_url_static(raw_url: str) -> Dict[str, Any]:
         port = parts.port  # raises ValueError for invalid ports
     except ValueError as exc:
         result["error"] = f"Malformed URL: {exc}"
+        result["structural_checks"] = compute_structural_checks(url, result, None)
         return result
 
     scheme = parts.scheme.lower()
@@ -221,9 +559,11 @@ def analyze_url_static(raw_url: str) -> Dict[str, Any]:
             f"The scheme '{scheme}:' is not a normal web link (http/https). Schemes such as javascript:, data: or file: can be abused.",
         )]
         result.update(valid=False, error=f"Unsupported scheme '{scheme}'. Only http and https URLs are analysed.", findings=findings)
+        result["structural_checks"] = compute_structural_checks(url, result, None)
         return result
     if not host:
         result["error"] = "Malformed URL: no host name could be identified."
+        result["structural_checks"] = compute_structural_checks(url, result, None)
         return result
 
     findings: List[Dict[str, str]] = []
@@ -236,6 +576,7 @@ def analyze_url_static(raw_url: str) -> Dict[str, Any]:
         labels_ok = all(_DOMAIN_LABEL_RE.match(lbl) for lbl in host.split(".") if lbl)
         if not labels_ok or "." not in host:
             result["error"] = "Malformed URL: the host name is not a valid domain or IP address."
+            result["structural_checks"] = compute_structural_checks(url, result, None)
             return result
 
     labels = [p for p in host.split(".") if p]
@@ -398,6 +739,20 @@ def analyze_url_static(raw_url: str) -> Dict[str, Any]:
         heuristic_level=level,
         heuristic_score=score,
     )
+
+    # ---------------- Structural Checks (9 dimensions) ----------------
+    lexical = None
+    if extract_url_lexical_features is not None:
+        try:
+            lexical = extract_url_lexical_features(url)
+        except Exception:
+            lexical = None
+
+    structural_checks = compute_structural_checks(url, result, lexical)
+    result["structural_checks"] = structural_checks
+    if lexical:
+        result["lexical_features"] = lexical
+
     return result
 
 

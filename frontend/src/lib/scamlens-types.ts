@@ -104,6 +104,14 @@ export interface UrlBrandMatch {
   official_domains: string[];
 }
 
+export interface StructuralCheckResult {
+  id: string;
+  name: string;
+  status: "Detected" | "Not Detected" | "Unable to Evaluate";
+  severity: "safe" | "warning" | "danger" | "info";
+  explanation: string;
+}
+
 export interface UrlIntelligenceData {
   valid: boolean;
   normalized_url: string;
@@ -113,6 +121,8 @@ export interface UrlIntelligenceData {
   findings: UrlFinding[];
   heuristic_level: "High" | "Elevated" | "Low" | "No notable indicators";
   heuristic_score: number;
+  structural_checks?: StructuralCheckResult[];
+  lexical_features?: Record<string, number>;
 }
 
 export interface SenderAnalysis {
