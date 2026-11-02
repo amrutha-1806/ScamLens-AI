@@ -1,4 +1,4 @@
-﻿# Python
+# Python
 __pycache__/
 *.py[cod]
 .pytest_cache/
@@ -46,4 +46,5 @@ data/raw/
 data/demo/
 *.tmp
 *.txt.txt
+~$*
 "Intellingent scam and phishing detection system"/

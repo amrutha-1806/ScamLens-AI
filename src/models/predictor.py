@@ -117,7 +117,7 @@ class ScamLensPredictor:
 
         return indicators
 
-    def predict(self, message: str) -> Dict[str, Any]:
+    def predict(self, message: str, user_id: Optional[str] = None) -> Dict[str, Any]:
         """
         Predict whether a text message is Legitimate or Scam/Phishing.
         """
@@ -169,7 +169,8 @@ class ScamLensPredictor:
                 scam_probability=round(scam_prob, 4),
                 risk_score=risk_score,
                 risk_level=risk_level,
-                explanation_summary="; ".join(indicators[:3])
+                explanation_summary="; ".join(indicators[:3]),
+                user_id=user_id
             )
         except Exception as e:
             logger.warning(f"Database logging failed: {e}")

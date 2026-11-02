@@ -1,8 +1,33 @@
 import { z } from "zod";
-import type { AnalysisResult, BatchAnalysisResponse, HealthStatus, MessageAnalysisRequest, ModelInfo, ScanRecord, UrlAnalysisRequest } from "./scamlens-types";
+import type {
+  AlertReviewRequest,
+  AlertReviewStatus,
+  AlertsResponse,
+  AnalysisResult,
+  BatchAnalysisResponse,
+  EmailAnalysisRequest,
+  HealthStatus,
+  MessageAnalysisRequest,
+  ModelInfo,
+  ScanRecord,
+  UrlAnalysisRequest,
+} from "./scamlens-types";
 
-const messageSchema = z.object({ message: z.string().trim().min(3).max(10000) });
-const urlSchema = z.object({ url: z.string().trim().url().max(2048) });
+const messageSchema = z.object({
+  message: z.string().trim().min(3).max(10000),
+  user_id: z.string().optional(),
+});
+const urlSchema = z.object({
+  url: z.string().trim().max(2048),
+  user_id: z.string().optional(),
+});
+const emailSchema = z.object({
+  sender: z.string().trim().min(3).max(500),
+  subject: z.string().trim().max(1000).optional(),
+  body: z.string().trim().min(3).max(50000),
+  user_id: z.string().optional(),
+});
+
 const resultSchema = z.object({
   prediction: z.enum(["Legitimate", "Scam/Phishing"]),
   risk_level: z.enum(["Low", "Suspicious", "High", "Very High"]),
@@ -14,7 +39,13 @@ const resultSchema = z.object({
   model: z.string(),
   scan_id: z.number().optional(),
   timestamp: z.string().optional(),
-});
+  explainability: z.any().optional(),
+  language_info: z.any().optional(),
+  url_intelligence: z.any().optional(),
+  sender_analysis: z.any().optional(),
+  subject_analysis: z.any().optional(),
+  embedded_urls: z.array(z.string()).optional(),
+}).passthrough();
 
 // The backend persists records with a wider field set than the analyze endpoints
 // (content / prediction_label / scam_probability / explanation_summary), so every
@@ -39,6 +70,10 @@ const historyItemSchema = z.object({
   explanation_summary: z.string().optional(),
   model: z.string().optional(),
   scan_id: z.number().optional(),
+  user_id: z.string().optional(),
+  review_status: z.string().optional(),
+  review_notes: z.string().optional(),
+  reviewed_at: z.string().optional(),
 }).passthrough();
 
 type HistoryItem = z.infer<typeof historyItemSchema>;
@@ -55,10 +90,11 @@ function mapHistoryRecord(item: HistoryItem): ScanRecord {
   // Backend probabilities are 0–1 fractions; a 0–100 value is only scaled for display.
   const fraction = rawFraction === undefined ? undefined : rawFraction > 1 ? rawFraction / 100 : rawFraction;
   const rawType = (item.input_type ?? item.type ?? "").toLowerCase();
+  const inputType: ScanRecord["inputType"] = rawType === "url" ? "url" : rawType === "email" ? "email" : "message";
   return {
     id: item.id,
     timestamp: item.timestamp,
-    inputType: rawType === "url" ? "url" : "message",
+    inputType,
     inputPreview: item.input_preview ?? item.content ?? item.message ?? item.url ?? "",
     prediction,
     riskLevel: (item.risk_level ?? "") as ScanRecord["riskLevel"],
@@ -69,6 +105,10 @@ function mapHistoryRecord(item: HistoryItem): ScanRecord {
     guidance: item.guidance ?? item.explanation_summary ?? "",
     model: item.model ?? "Not provided",
     scanId: item.scan_id,
+    userId: item.user_id,
+    reviewStatus: (item.review_status as AlertReviewStatus | undefined) ?? "unreviewed",
+    reviewNotes: item.review_notes,
+    reviewedAt: item.reviewed_at,
   };
 }
 
@@ -104,7 +144,24 @@ export class ScamlensApiError extends Error {
 
 function mapResult(value: z.infer<typeof resultSchema>): AnalysisResult {
   // risk_probability is a 0–1 fraction from the backend; multiply by 100 for display only.
-  return { prediction: value.prediction, riskLevel: value.risk_level, riskProbability: value.risk_probability * 100, riskScore: value.risk_score, riskFraction: value.risk_probability, indicators: value.indicators, guidance: value.guidance, model: value.model, scanId: value.scan_id, timestamp: value.timestamp };
+  return {
+    prediction: value.prediction,
+    riskLevel: value.risk_level,
+    riskProbability: value.risk_probability * 100,
+    riskScore: value.risk_score,
+    riskFraction: value.risk_probability,
+    indicators: value.indicators,
+    guidance: value.guidance,
+    model: value.model,
+    scanId: value.scan_id,
+    timestamp: value.timestamp,
+    explainability: value.explainability,
+    languageInfo: value.language_info,
+    urlIntelligence: value.url_intelligence,
+    senderAnalysis: value.sender_analysis,
+    subjectAnalysis: value.subject_analysis,
+    embeddedUrls: value.embedded_urls,
+  };
 }
 
 async function errorMessage(response: Response) {
@@ -141,6 +198,64 @@ export const scamlensApi = {
   baseUrl: apiBaseUrl,
   analyzeMessage: async (input: MessageAnalysisRequest) => parseResult(await postJson("/api/analyze/message", messageSchema.parse(input))),
   analyzeUrl: async (input: UrlAnalysisRequest) => parseResult(await postJson("/api/analyze/url", urlSchema.parse(input))),
+  analyzeEmail: async (input: EmailAnalysisRequest) => parseResult(await postJson("/api/analyze/email", emailSchema.parse(input))),
+  getAlerts: async (status: string = "all", limit: number = 50): Promise<AlertsResponse> => {
+    const query = new URLSearchParams({ status, limit: String(limit) });
+    const raw = await request(`/api/alerts?${query.toString()}`);
+    const alertsSchema = z.object({
+      count: z.number().optional(),
+      alerts: z.array(historyItemSchema),
+      unreviewed_count: z.number().optional(),
+      high_count: z.number().optional(),
+      very_high_count: z.number().optional(),
+    }).passthrough();
+    const parsed = alertsSchema.safeParse(raw);
+    if (!parsed.success) throw new ScamlensApiError("The backend response did not match the expected alerts format.");
+    const d = parsed.data;
+    const mapped = d.alerts.map(mapHistoryRecord);
+    return {
+      count: mapped.length,
+      alerts: mapped,
+      unreviewed_count: d.unreviewed_count ?? mapped.filter(a => a.reviewStatus === "unreviewed").length,
+      high_count: d.high_count ?? mapped.filter(a => a.riskLevel === "High").length,
+      very_high_count: d.very_high_count ?? mapped.filter(a => a.riskLevel === "Very High").length,
+    };
+  },
+  reviewAlert: async (scanId: number | string, req: AlertReviewRequest): Promise<{ success: boolean; scan_id: number; review_status: string }> => {
+    const raw = await postJson(`/api/alerts/${scanId}/review`, req);
+    return raw as { success: boolean; scan_id: number; review_status: string };
+  },
+  downloadIncidentPdf: async (scanId: number | string): Promise<{ filename: string; size: number }> => {
+    if (!apiBaseUrl) throw new ScamlensApiError("Backend unavailable");
+    let response: Response;
+    try {
+      response = await fetch(`${apiBaseUrl}/api/reports/incident-pdf/${scanId}`, {
+        method: "GET",
+        headers: { Accept: "application/pdf" },
+      });
+    } catch {
+      throw new ScamlensApiError("Backend unavailable");
+    }
+    if (!response.ok) {
+      throw new ScamlensApiError(await errorMessage(response), response.status);
+    }
+    const blob = await response.blob();
+    if (!blob || blob.size === 0) {
+      throw new ScamlensApiError("The backend returned an empty report file.");
+    }
+    const disposition = response.headers.get("Content-Disposition") ?? "";
+    const match = /filename="?([^";]+)"?/i.exec(disposition);
+    const filename = match?.[1] ?? `SCAMLENS_Incident_SL${scanId}.pdf`;
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+    return { filename, size: blob.size };
+  },
   analyzeBatch: async (file: File, column?: string): Promise<BatchAnalysisResponse> => {
     const form = new FormData();
     form.append("file", file);

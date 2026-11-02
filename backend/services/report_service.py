@@ -286,3 +286,150 @@ def generate_security_report_pdf(
 
     draw_footer(current_page)
     return pdf.build_bytes()
+
+
+def generate_incident_report_pdf(record: Dict[str, Any]) -> bytes:
+    """
+    Build a 1-page formal security incident dossier for a single scan record.
+    """
+    pdf = SimplePDFCanvas()
+    pdf.new_page()
+
+    # Colors
+    c_navy = (0.05, 0.08, 0.16)
+    c_cyan = (0.05, 0.65, 0.85)
+    c_red = (0.85, 0.20, 0.20)
+    c_green = (0.10, 0.65, 0.40)
+    c_amber = (0.85, 0.55, 0.10)
+    c_gray_bg = (0.96, 0.97, 0.98)
+    c_border = (0.85, 0.88, 0.92)
+    c_text_dark = (0.10, 0.15, 0.22)
+    c_text_muted = (0.45, 0.50, 0.58)
+
+    scan_id = str(record.get('id', record.get('scan_id', 'N/A')))
+    timestamp = str(record.get('timestamp', 'N/A'))
+    input_type = str(record.get('input_type', 'message')).upper()
+    pred_label = str(record.get('prediction_label', record.get('prediction', 'Unknown')))
+    risk_level = str(record.get('risk_level', 'Unknown'))
+    risk_score = float(record.get('risk_score', 0.0))
+    scam_prob = float(record.get('scam_probability', record.get('risk_probability', 0.0)))
+    if scam_prob > 1.0:
+        scam_prob = scam_prob / 100.0
+    content = str(record.get('content', record.get('input_preview', '')))
+    explanation = str(record.get('explanation_summary', record.get('guidance', 'No explanation stored.')))
+    review_status = str(record.get('review_status', 'unreviewed')).upper()
+    review_notes = str(record.get('review_notes') or 'No analyst review notes recorded.')
+
+    is_threat = 'scam' in pred_label.lower() or 'phish' in pred_label.lower() or risk_level in ('High', 'Very High')
+
+    # 1. Header Banner
+    pdf.rect_fill(0, 0, pdf.PAGE_WIDTH, 65, *c_navy)
+    pdf.rect_fill(0, 63, pdf.PAGE_WIDTH, 2, *c_cyan)
+    pdf.text(36, 26, 'SCAMLENS AI - INCIDENT FORENSIC DOSSIER', size=15, bold=True, color=(1.0, 1.0, 1.0))
+    pdf.text(36, 46, 'ZERO-EXECUTION STATIC CYBERSECURITY AUDIT REPORT', size=8.5, bold=False, color=(0.7, 0.8, 0.9))
+    pdf.text(pdf.PAGE_WIDTH - 160, 46, f'CASE REF: SL-{scan_id.zfill(6)}', size=9, bold=True, color=c_cyan)
+
+    # 2. Executive Incident Summary Box
+    y = 82
+    pdf.rect_fill(36, y, pdf.PAGE_WIDTH - 72, 70, *c_gray_bg)
+    pdf.rect_stroke(36, y, pdf.PAGE_WIDTH - 72, 70, *c_border, line_w=0.8)
+
+    pdf.text(48, y + 18, f'TARGET ARTIFACT: {input_type}', size=8, bold=True, color=c_text_muted)
+    pdf.text(48, y + 36, f'TIMESTAMP (UTC): {timestamp}', size=8, bold=False, color=c_text_dark)
+    pdf.text(48, y + 54, f'TRIAGE STATUS: {review_status}', size=8, bold=True, color=c_cyan if review_status != 'UNREVIEWED' else c_amber)
+
+    # Right side: Verdict Badge
+    pdf.rect_fill(pdf.PAGE_WIDTH - 210, y + 12, 160, 46, *(c_red if is_threat else c_green))
+    pdf.text(pdf.PAGE_WIDTH - 198, y + 30, f'VERDICT: {pred_label.upper()}', size=10, bold=True, color=(1.0, 1.0, 1.0))
+    pdf.text(pdf.PAGE_WIDTH - 198, y + 46, f'SEVERITY: {risk_level} ({risk_score:.1f}%)', size=8.5, bold=False, color=(1.0, 1.0, 1.0))
+
+    # 3. Target Content Box
+    y = 168
+    pdf.text(36, y, 'ANALYZED CONTENT SNIPPET', size=10, bold=True, color=c_navy)
+    pdf.line(36, y + 4, pdf.PAGE_WIDTH - 36, y + 4, *c_border)
+    y += 14
+
+    pdf.rect_fill(36, y, pdf.PAGE_WIDTH - 72, 65, 0.98, 0.98, 0.99)
+    pdf.rect_stroke(36, y, pdf.PAGE_WIDTH - 72, 65, *c_border, line_w=0.6)
+
+    c_lines = [content[i:i+80] for i in range(0, min(len(content), 240), 80)]
+    for idx, cl in enumerate(c_lines[:3]):
+        pdf.text(46, y + 18 + (idx * 16), cl, size=8.5, bold=False, color=c_text_dark)
+    if not c_lines:
+        pdf.text(46, y + 25, '[Empty content]', size=8.5, bold=False, color=c_text_muted)
+
+    # 4. Machine Learning & Telemetry
+    y += 85
+    pdf.text(36, y, 'MACHINE LEARNING & FORENSIC METRICS', size=10, bold=True, color=c_navy)
+    pdf.line(36, y + 4, pdf.PAGE_WIDTH - 36, y + 4, *c_border)
+    y += 14
+
+    col_w = (pdf.PAGE_WIDTH - 72 - 20) / 3
+    metrics = [
+        ('Random Forest Probability', f'{scam_prob * 100:.2f}% Phishing', 'Ensemble leaf vote'),
+        ('Calibrated Threat Score', f'{risk_score:.1f} / 100.0', f'{risk_level} Risk Category'),
+        ('Feature Space Dimension', '10,043 Features', 'TF-IDF word & char + 43 lexical'),
+    ]
+    for idx, (m_label, m_val, m_sub) in enumerate(metrics):
+        bx = 36 + (idx * (col_w + 10))
+        pdf.rect_fill(bx, y, col_w, 48, *c_gray_bg)
+        pdf.rect_stroke(bx, y, col_w, 48, *c_border, line_w=0.6)
+        pdf.text(bx + 8, y + 14, m_label, size=7.5, bold=True, color=c_text_muted)
+        pdf.text(bx + 8, y + 28, m_val, size=9.5, bold=True, color=c_navy)
+        pdf.text(bx + 8, y + 40, m_sub, size=6.8, bold=False, color=c_text_muted)
+
+    # 5. Explanatory Indicators
+    y += 66
+    pdf.text(36, y, 'EXPLAINABLE INDICATORS & HEURISTIC FINDINGS', size=10, bold=True, color=c_navy)
+    pdf.line(36, y + 4, pdf.PAGE_WIDTH - 36, y + 4, *c_border)
+    y += 14
+
+    pdf.rect_fill(36, y, pdf.PAGE_WIDTH - 72, 75, 1.0, 1.0, 1.0)
+    pdf.rect_stroke(36, y, pdf.PAGE_WIDTH - 72, 75, *c_border, line_w=0.6)
+
+    ind_lines = [explanation[i:i+85] for i in range(0, min(len(explanation), 340), 85)]
+    for idx, il in enumerate(ind_lines[:4]):
+        pdf.text(46, y + 16 + (idx * 15), f'*  {il}', size=8, bold=False, color=c_text_dark)
+    if not ind_lines:
+        pdf.text(46, y + 25, 'No specific risk indicators flagged. Message classified via baseline feature distribution.', size=8, color=c_text_muted)
+
+    # 6. Analyst Review Notes & Feedback
+    y += 92
+    pdf.text(36, y, 'INCIDENT REVIEW & ANALYST TRIAGE', size=10, bold=True, color=c_navy)
+    pdf.line(36, y + 4, pdf.PAGE_WIDTH - 36, y + 4, *c_border)
+    y += 14
+
+    pdf.rect_fill(36, y, pdf.PAGE_WIDTH - 72, 50, *c_gray_bg)
+    pdf.rect_stroke(36, y, pdf.PAGE_WIDTH - 72, 50, *c_border, line_w=0.6)
+    pdf.text(46, y + 16, f'Current Review Status: {review_status}', size=8.5, bold=True, color=c_navy)
+    note_preview = review_notes[:170]
+    pdf.text(46, y + 32, f'Analyst Notes: {note_preview}', size=7.8, bold=False, color=c_text_dark)
+
+    # 7. Actionable Guidance / Remediation
+    y += 66
+    pdf.text(36, y, 'RECOMMENDED INCIDENT CONTAINMENT ACTIONS', size=10, bold=True, color=c_navy)
+    pdf.line(36, y + 4, pdf.PAGE_WIDTH - 36, y + 4, *c_border)
+    y += 14
+
+    if is_threat:
+        recs = [
+            '1. DO NOT CLICK any embedded links or call phone numbers mentioned in the message.',
+            '2. DO NOT provide banking credentials, OTPs, PINs, or PAN/Aadhaar identity documents.',
+            '3. Block the sender address or phone number across your communication channels.',
+            '4. Report this incident to your internal security operations team or National Cyber Crime portal.'
+        ]
+    else:
+        recs = [
+            '1. This artifact did not exhibit primary phishing indicators on holdout evaluation.',
+            '2. Always verify the sender identity through an independent, official communication channel.',
+            '3. Never disclose one-time passwords (OTPs) even if a communication appears legitimate.'
+        ]
+    for idx, rec in enumerate(recs):
+        pdf.text(46, y + 12 + (idx * 14), rec, size=7.8, bold=False, color=c_text_dark)
+
+    # Footer
+    pdf.line(36, pdf.PAGE_HEIGHT - 38, pdf.PAGE_WIDTH - 36, pdf.PAGE_HEIGHT - 38, *c_border)
+    pdf.text(36, pdf.PAGE_HEIGHT - 24, 'SCAMLENS AI Security Operations * Confidential Forensic Dossier * Offline ML Inference', size=7.5, color=c_text_muted)
+    pdf.text(pdf.PAGE_WIDTH - 120, pdf.PAGE_HEIGHT - 24, f'Generated: {datetime.now().strftime("%Y-%m-%d")}', size=7.5, color=c_text_muted)
+
+    return pdf.build_bytes()

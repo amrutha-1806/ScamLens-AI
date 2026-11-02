@@ -1,11 +1,11 @@
 """
 SCAMLENS AI — FastAPI Backend
-Exposes the existing Random Forest ML pipeline via a REST API.
+Exposes the existing Random Forest ML pipeline and static cybersecurity intelligence engines via REST APIs.
 
 Start with:
-    uvicorn backend.main:app --host 127.0.0.1 --port 8000 --reload
+    uvicorn backend.main:app --host 127.0.0.1 --port 8001 --reload
 
-All ML inference is performed entirely offline using the existing trained model.
+All ML inference is performed entirely offline using the trained model.
 URLs are NEVER opened, fetched, or visited — they are analyzed as static strings only.
 """
 
@@ -32,14 +32,29 @@ from backend.schemas import (
     BatchResultItem,
     HealthResponse,
     HistoryResponse,
+    AlertsResponse,
+    AlertReviewRequest,
+    UserFeedbackRequest,
     MessageRequest,
+    EmailAnalysisRequest,
     ModelInfoResponse,
     ScanRecord,
     UrlRequest,
 )
 from backend.services.ml_service import analyze
-from backend.services.history_service import get_history
-from backend.services.report_service import generate_security_report_pdf
+from backend.services.url_intelligence import analyze_url_static
+from backend.services.email_service import analyze_email_phishing
+from backend.services.history_service import (
+    get_history,
+    get_alerts,
+    update_alert,
+    get_scan,
+    save_feedback,
+)
+from backend.services.report_service import (
+    generate_security_report_pdf,
+    generate_incident_report_pdf,
+)
 
 # ---------------------------------------------------------------------------
 # App init
@@ -47,11 +62,12 @@ from backend.services.report_service import generate_security_report_pdf
 app = FastAPI(
     title="SCAMLENS AI API",
     description=(
-        "REST API exposing the SCAMLENS AI Random Forest scam/phishing detection model. "
+        "REST API exposing the SCAMLENS AI Random Forest scam/phishing detection model "
+        "and static cybersecurity intelligence engines. "
         "All inference is 100% offline. URLs are analyzed as static strings only — "
-        "they are never opened or visited."
+        "they are never opened, fetched, or visited."
     ),
-    version="1.0.0",
+    version="1.1.0",
 )
 
 # ---------------------------------------------------------------------------
@@ -93,25 +109,24 @@ app.add_middleware(CORSMiddleware, **cors_kwargs)
 def health_check():
     """Check whether the API and ML model are ready."""
     try:
-        # Trigger predictor load to verify model is accessible
         from backend.services.ml_service import _get_predictor
         _get_predictor()
         return HealthResponse(status="healthy", model="Random Forest")
     except Exception as exc:
-        raise HTTPException(status_code=503, detail=f"Model not ready: {exc}")
+        raise HTTPException(status_code=503, detail=f"Model unavailable: {exc}")
 
 
 # ---------------------------------------------------------------------------
-# Analyze — message
+# Analyze — message (with Explainable AI & Multilingual Script Detection)
 # ---------------------------------------------------------------------------
 @app.post("/api/analyze/message", response_model=AnalysisResponse, tags=["Analysis"])
 def analyze_message(request: MessageRequest):
     """
     Classify a text message as Legitimate or Scam/Phishing.
-    Uses the existing offline Random Forest model and FeatureExtractor.
+    Includes token-level Explainable AI attributions and multilingual script checks.
     """
     try:
-        result = analyze(request.message)
+        result = analyze(request.message, user_id=request.user_id, include_explainability=True)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
     except Exception as exc:
@@ -120,24 +135,86 @@ def analyze_message(request: MessageRequest):
 
 
 # ---------------------------------------------------------------------------
-# Analyze — URL (NEVER opened or fetched — static string only)
+# Analyze — URL (Deep Static Intelligence, zero execution)
 # ---------------------------------------------------------------------------
 @app.post("/api/analyze/url", response_model=AnalysisResponse, tags=["Analysis"])
 def analyze_url(request: UrlRequest):
     """
-    Analyze a URL string for scam/phishing risk.
+    Analyze a URL string for scam/phishing risk using static structural heuristics
+    and the trained ML model.
 
-    SECURITY: The submitted URL is treated as plain text.
+    SECURITY: The submitted URL is treated strictly as plain text.
     It is NEVER fetched, opened, resolved, crawled, or visited.
-    The analysis is purely static: URL structure + ML model features.
     """
     try:
-        result = analyze(request.url)
+        # 1. Static URL Intelligence Decomposition
+        url_intel = analyze_url_static(request.url)
+        if not url_intel.get("valid", True):
+            raise HTTPException(status_code=422, detail=url_intel.get("error", "Malformed URL"))
+
+        # 2. ML Inference on URL text
+        ml_result = analyze(request.url, user_id=request.user_id, include_explainability=False)
+
+        # 3. Integrate static URL intelligence
+        ml_result["url_intelligence"] = url_intel
+
+        # Merge URL findings into indicators list
+        for f in url_intel.get("findings", []):
+            finding_tag = f"[URL] {f['title']}"
+            if finding_tag not in ml_result["indicators"]:
+                ml_result["indicators"].insert(0, finding_tag)
+
+        # If static heuristics detect high risk (e.g. raw IP host or typosquatting), adjust score
+        if url_intel.get("heuristic_level") == "High" and ml_result["risk_score"] < 75.0:
+            ml_result["risk_score"] = max(ml_result["risk_score"], 80.0)
+            ml_result["risk_level"] = "High"
+            ml_result["prediction"] = "Scam/Phishing"
+
+    except HTTPException:
+        raise
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Prediction engine error: {exc}")
-    return AnalysisResponse(**result)
+        raise HTTPException(status_code=500, detail=f"URL inspection error: {exc}")
+
+    return AnalysisResponse(**ml_result)
+
+
+# ---------------------------------------------------------------------------
+# Analyze — Email Phishing (Header, Spoofing, Multi-link, Body)
+# ---------------------------------------------------------------------------
+@app.post("/api/analyze/email", response_model=AnalysisResponse, tags=["Analysis"])
+def analyze_email(request: EmailAnalysisRequest):
+    """
+    Analyze an email for phishing, credential theft, and display name spoofing.
+    Includes sender header analysis, static URL inspection, and Explainable AI.
+    """
+    try:
+        result = analyze_email_phishing(
+            sender=request.sender,
+            subject=request.subject,
+            body=request.body,
+            user_id=request.user_id
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Email analysis error: {exc}")
+
+    return AnalysisResponse(
+        prediction=result["prediction"],
+        risk_level=result["risk_level"],
+        risk_score=result["risk_score"],
+        risk_probability=result["risk_probability"],
+        indicators=result["indicators"],
+        guidance=result["guidance"],
+        model=result["model"],
+        scan_id=result.get("scan_id"),
+        timestamp=result.get("timestamp"),
+        explainability=result.get("explainability"),
+        language_info=result.get("language_info"),
+        embedded_urls=result.get("embedded_urls"),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -150,8 +227,6 @@ async def analyze_batch(
 ):
     """
     Analyze a CSV file containing messages or URLs.
-
-    Expected CSV format: one column named 'text' (or the user-selected column / first column).
     Returns real ML predictions for every row — no fabricated results.
     """
     if not file.filename or not file.filename.lower().endswith(".csv"):
@@ -201,7 +276,7 @@ async def analyze_batch(
             errors.append(f"Row {idx + 1}: empty value in column '{text_col}' — skipped.")
             continue
         try:
-            r = analyze(input_text)
+            r = analyze(input_text, include_explainability=False)
             preview = input_text[:120] + ("…" if len(input_text) > 120 else "")
             input_type = "url" if input_text.lower().startswith(("http://", "https://")) else "message"
             results.append(BatchResultItem(
@@ -235,13 +310,16 @@ async def analyze_batch(
 
 
 # ---------------------------------------------------------------------------
-# Scan history
+# Scan history & Security Alert Center
 # ---------------------------------------------------------------------------
 @app.get("/api/history", response_model=HistoryResponse, tags=["History"])
-def scan_history(limit: int = Query(default=100, ge=1, le=500)):
-    """Return recent scan records from the existing SQLite database."""
+def scan_history(
+    limit: int = Query(default=100, ge=1, le=500),
+    user_id: Optional[str] = Query(default=None, description="Optional user ID filter")
+):
+    """Return recent scan records from the SQLite database."""
     try:
-        records = get_history(limit=limit)
+        records = get_history(limit=limit, user_id=user_id)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Database error: {exc}")
 
@@ -255,13 +333,18 @@ def scan_history(limit: int = Query(default=100, ge=1, le=500)):
                 input_type=r.get("input_type", "text"),
                 content=r.get("content", ""),
                 prediction_label=pred_label,
-                prediction=pred_label,                          # alias
+                prediction=pred_label,
                 scam_probability=float(r.get("scam_probability", 0.0)),
-                risk_probability=float(r.get("scam_probability", 0.0)),  # alias
+                risk_probability=float(r.get("scam_probability", 0.0)),
                 risk_score=float(r.get("risk_score", 0.0)),
                 risk_level=r.get("risk_level", ""),
                 explanation_summary=r.get("explanation_summary"),
-                indicators=[],  # not stored per-row; empty list is correct
+                indicators=[],
+                model="Random Forest",
+                user_id=r.get("user_id"),
+                review_status=r.get("review_status", "unreviewed"),
+                review_notes=r.get("review_notes"),
+                reviewed_at=str(r.get("reviewed_at", "")) if r.get("reviewed_at") else None,
             ))
         except Exception:
             continue
@@ -269,9 +352,110 @@ def scan_history(limit: int = Query(default=100, ge=1, le=500)):
     return HistoryResponse(
         count=len(scan_records),
         records=scan_records,
-        total=len(scan_records),     # alias field
-        items=scan_records,          # alias field
+        total=len(scan_records),
+        items=scan_records,
     )
+
+
+@app.get("/api/alerts", response_model=AlertsResponse, tags=["Alerts"])
+def security_alerts(
+    status: Optional[str] = Query(default="all", description="all | unreviewed | reviewed | flagged_fp | investigating"),
+    limit: int = Query(default=50, ge=1, le=200),
+    user_id: Optional[str] = Query(default=None, description="Optional user ID filter")
+):
+    """
+    Return high-risk detections for the Security Alert Center.
+    Enables analysts to triage, review, and add notes to suspicious incidents.
+    """
+    try:
+        records = get_alerts(limit=limit, status_filter=status, user_id=user_id)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Database error: {exc}")
+
+    alert_records: List[ScanRecord] = []
+    unreviewed = 0
+    high = 0
+    very_high = 0
+
+    for r in records:
+        try:
+            pred_label = r.get("prediction_label", "")
+            rlevel = r.get("risk_level", "")
+            rstatus = r.get("review_status", "unreviewed")
+
+            if rstatus == "unreviewed":
+                unreviewed += 1
+            if rlevel == "High":
+                high += 1
+            elif rlevel == "Very High":
+                very_high += 1
+
+            alert_records.append(ScanRecord(
+                id=r["id"],
+                timestamp=str(r.get("timestamp", "")),
+                input_type=r.get("input_type", "text"),
+                content=r.get("content", ""),
+                prediction_label=pred_label,
+                prediction=pred_label,
+                scam_probability=float(r.get("scam_probability", 0.0)),
+                risk_probability=float(r.get("scam_probability", 0.0)),
+                risk_score=float(r.get("risk_score", 0.0)),
+                risk_level=rlevel,
+                explanation_summary=r.get("explanation_summary"),
+                indicators=[],
+                model="Random Forest",
+                user_id=r.get("user_id"),
+                review_status=rstatus,
+                review_notes=r.get("review_notes"),
+                reviewed_at=str(r.get("reviewed_at", "")) if r.get("reviewed_at") else None,
+            ))
+        except Exception:
+            continue
+
+    return AlertsResponse(
+        count=len(alert_records),
+        alerts=alert_records,
+        unreviewed_count=unreviewed,
+        high_count=high,
+        very_high_count=very_high,
+    )
+
+
+@app.post("/api/alerts/{scan_id}/review", tags=["Alerts"])
+def review_alert(scan_id: int, request: AlertReviewRequest):
+    """
+    Update the triage status and analyst notes for a high-risk security alert.
+    """
+    try:
+        success = update_alert(
+            scan_id=scan_id,
+            review_status=request.review_status,
+            review_notes=request.review_notes,
+            user_id=request.user_id
+        )
+        if not success:
+            raise HTTPException(status_code=404, detail=f"Alert with ID {scan_id} not found or unauthorized.")
+        return {"success": True, "scan_id": scan_id, "review_status": request.review_status}
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Database update failed: {exc}")
+
+
+@app.post("/api/feedback", tags=["History"])
+def submit_feedback(request: UserFeedbackRequest):
+    """Submit user verification feedback on a model scan."""
+    try:
+        fb_id = save_feedback(
+            scan_id=request.scan_id,
+            actual_label=request.actual_label,
+            user_comment=request.user_comment or ""
+        )
+        return {"status": "recorded", "feedback_id": fb_id}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Feedback recording failed: {exc}")
 
 
 # ---------------------------------------------------------------------------
@@ -288,7 +472,6 @@ def model_info():
 
     metrics: dict = {}
 
-    # Read real metrics from model_comparison.csv
     csv_path = PROJECT_ROOT / "reports" / "model_results" / "model_comparison.csv"
     if csv_path.exists():
         try:
@@ -303,12 +486,11 @@ def model_info():
                     "f1_score":  round(float(row.get("f1_score",  0)) * 100, 2),
                     "macro_f1":  round(float(row.get("macro_f1",  0)) * 100, 2),
                     "roc_auc":   round(float(row.get("roc_auc",   0)), 4),
-                    "unit": "%% (accuracy/precision/recall/f1); score 0-1 (roc_auc)",
+                    "unit": "% (accuracy/precision/recall/f1); score 0-1 (roc_auc)",
                 }
         except Exception:
             pass
 
-    # Read metadata if available
     meta_path = PROJECT_ROOT / "saved_models" / "model_metadata.json"
     if meta_path.exists():
         try:
@@ -329,20 +511,21 @@ def model_info():
             "43 statistical/URL lexical features = 10,043 total features"
         ),
         supported_analysis_types=["text message", "email text", "URL (static string only)"],
-        version="1.0.0",
+        version="1.1.0",
         classes=["Legitimate", "Scam/Phishing"],
         metrics=metrics if metrics else None,
     )
 
 
 # ---------------------------------------------------------------------------
-# Security Report PDF Generation
+# Security Reports & Incident PDF Generation
 # ---------------------------------------------------------------------------
 @app.get("/api/reports/pdf", tags=["Reports"])
 def export_report_pdf(
     scope: str = Query(default="all", description="all | scam | legitimate | high_risk | message | url"),
     days: int = Query(default=0, ge=0, le=3650, description="0 = All time, or last N days"),
     limit: int = Query(default=250, ge=1, le=500),
+    user_id: Optional[str] = Query(default=None)
 ):
     """
     Generate a multi-page PDF Security Analysis Report from real SQLite scan history.
@@ -350,11 +533,10 @@ def export_report_pdf(
     from datetime import datetime, timedelta
 
     try:
-        records = get_history(limit=limit)
+        records = get_history(limit=limit, user_id=user_id)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Database error: {exc}")
 
-    # Filter by date window if days > 0
     if days > 0:
         cutoff = datetime.now() - timedelta(days=days)
         filtered_by_date = []
@@ -371,7 +553,6 @@ def export_report_pdf(
     else:
         date_label = "All Time"
 
-    # Filter by scope
     scope_norm = scope.lower().strip()
     scope_labels = {
         "all": "All Scans",
@@ -408,3 +589,30 @@ def export_report_pdf(
             "Cache-Control": "no-store",
         },
     )
+
+
+@app.get("/api/reports/incident-pdf/{scan_id}", tags=["Reports"])
+def export_incident_pdf(
+    scan_id: int,
+    user_id: Optional[str] = Query(default=None)
+):
+    """
+    Generate a 1-page formal security incident forensic dossier for a specific scan.
+    """
+    scan_record = get_scan(scan_id=scan_id, user_id=user_id)
+    if not scan_record:
+        raise HTTPException(status_code=404, detail=f"Incident scan ID {scan_id} not found or unauthorized.")
+
+    try:
+        pdf_bytes = generate_incident_report_pdf(scan_record)
+        filename = f"SCAMLENS_Incident_SL{scan_id:06d}.pdf"
+        return Response(
+            content=pdf_bytes,
+            media_type="application/pdf",
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename}"',
+                "Cache-Control": "no-store",
+            },
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Incident report generation failed: {exc}")

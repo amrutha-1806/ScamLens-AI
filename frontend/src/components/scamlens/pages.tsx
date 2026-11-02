@@ -1,6 +1,14 @@
 import { ApiDiagnosticsPanel } from "./api-diagnostics";
 export { LearnPractisePage } from "./learn-practise-page";
 export { SettingsInformationPage, type SettingsInfoTab } from "./settings-info-page";
+export { SecurityAlertCenterView } from "./alert-center";
+export { EmailAnalyzerSection } from "./email-analyzer";
+export { ExplainabilityCard, LanguageTransparencyCard } from "./explainable-ai";
+export { UrlIntelligenceCard } from "./url-intelligence";
+import { ExplainabilityCard, LanguageTransparencyCard } from "./explainable-ai";
+import { UrlIntelligenceCard } from "./url-intelligence";
+import { EmailAnalyzerSection } from "./email-analyzer";
+import { SecurityAlertCenterView } from "./alert-center";
 import { Fragment, useMemo, useRef, useState, type ChangeEvent, type DragEvent } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
@@ -28,15 +36,18 @@ import {
   FileSpreadsheet,
   FileText,
   Filter,
+  History,
   Layers,
   Link2,
   ListChecks,
   Loader2,
   LockKeyhole,
+  Mail,
   MessageSquareText,
   Network,
   Radar,
   RefreshCw,
+  ScanText,
   Search,
   ShieldAlert,
   ShieldCheck,
@@ -290,6 +301,27 @@ function AnalysisResultView({ result }: { result: AnalysisResult }) {
           <p className="mt-1.5 text-xs leading-5 text-muted-foreground">{result.guidance}</p>
         </motion.div>
       </div>
+
+      {/* 1. Explainable AI Token Attributions */}
+      {result.explainability && (
+        <div className="pt-2">
+          <ExplainabilityCard explainability={result.explainability} />
+        </div>
+      )}
+
+      {/* 2. Multilingual Script & Regional Dialect Indicators */}
+      {result.languageInfo && (
+        <div className="pt-2">
+          <LanguageTransparencyCard languageInfo={result.languageInfo} />
+        </div>
+      )}
+
+      {/* 3. Deep Static URL Intelligence Breakdown */}
+      {result.urlIntelligence && (
+        <div className="pt-2">
+          <UrlIntelligenceCard intelligence={result.urlIntelligence} />
+        </div>
+      )}
     </motion.div>
   );
 }
@@ -698,6 +730,7 @@ export function DashboardPage() {
 // ============================================================================
 export function MessageAnalyzerPage() {
   const { shouldReduceMotion } = useScamlensPreferences();
+  const [mode, setMode] = useState<"message" | "email">("message");
   const [message, setMessage] = useState("");
   const [status, setStatus] = useState<RequestStatus>("idle");
   const [error, setError] = useState("");
@@ -732,6 +765,49 @@ export function MessageAnalyzerPage() {
         description="Inspect SMS, WhatsApp, email, or chat messages for scam lures, social engineering urgency, and embedded phishing links using the trained Random Forest classifier."
       />
 
+      {/* Analysis Mode Toggle */}
+      <div className="flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          onClick={() => {
+            setMode("message");
+            setResult(null);
+            setStatus("idle");
+          }}
+          className={cn(
+            "flex items-center gap-2 rounded-lg border px-4 py-2 text-xs font-semibold transition-all sm:text-sm",
+            mode === "message"
+              ? "border-primary bg-primary text-primary-foreground shadow-sm"
+              : "border-border bg-card text-muted-foreground hover:bg-secondary hover:text-foreground"
+          )}
+        >
+          <ScanText className="size-4" />
+          <span>SMS &amp; Text Message Analyzer</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => {
+            setMode("email");
+            setResult(null);
+            setStatus("idle");
+          }}
+          className={cn(
+            "flex items-center gap-2 rounded-lg border px-4 py-2 text-xs font-semibold transition-all sm:text-sm",
+            mode === "email"
+              ? "border-primary bg-primary text-primary-foreground shadow-sm"
+              : "border-border bg-card text-muted-foreground hover:bg-secondary hover:text-foreground"
+          )}
+        >
+          <Mail className="size-4" />
+          <span>Email Phishing Analyzer</span>
+          <span className="rounded bg-primary-foreground/20 px-1.5 py-0.5 text-[10px] font-bold">New</span>
+        </button>
+      </div>
+
+      {mode === "email" ? (
+        <EmailAnalyzerSection onResultUpdated={setResult} />
+      ) : (
       <div className="grid gap-6 xl:grid-cols-[1.05fr_.95fr]">
         <Panel
           title="Message Content Input"
@@ -909,6 +985,7 @@ export function MessageAnalyzerPage() {
           </AnimatePresence>
         </Panel>
       </div>
+      )}
     </div>
   );
 }
@@ -2269,6 +2346,7 @@ const PAGE_SIZE = 12;
 
 export function HistoryPage() {
   const { shouldReduceMotion } = useScamlensPreferences();
+  const [viewMode, setViewMode] = useState<"history" | "alert_center">("history");
   const [filter, setFilter] = useState<string>("All");
   const [query, setQuery] = useState("");
   const [sortBy, setSortBy] = useState<SortOption>("newest");
@@ -2316,6 +2394,43 @@ export function HistoryPage() {
         description="Search, filter, sort, and inspect all message, URL, and batch scan records stored in the SQLite database."
       />
 
+      {/* View Mode Toggle: All History vs Security Alert Center */}
+      <div className="flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          onClick={() => setViewMode("history")}
+          className={cn(
+            "flex items-center gap-2 rounded-lg border px-4 py-2 text-xs font-semibold transition-all sm:text-sm",
+            viewMode === "history"
+              ? "border-primary bg-primary text-primary-foreground shadow-sm"
+              : "border-border bg-card text-muted-foreground hover:bg-secondary hover:text-foreground"
+          )}
+        >
+          <History className="size-4" />
+          <span>All Scan History ({history.data?.length ?? 0})</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setViewMode("alert_center")}
+          className={cn(
+            "flex items-center gap-2 rounded-lg border px-4 py-2 text-xs font-semibold transition-all sm:text-sm",
+            viewMode === "alert_center"
+              ? "border-primary bg-primary text-primary-foreground shadow-sm"
+              : "border-border bg-card text-muted-foreground hover:bg-secondary hover:text-foreground"
+          )}
+        >
+          <ShieldAlert className="size-4" />
+          <span>Security Alert Center</span>
+          <span className="rounded bg-danger/20 px-1.5 py-0.5 text-[10px] font-bold text-danger dark:text-rose-300">
+            High-Risk Triage
+          </span>
+        </button>
+      </div>
+
+      {viewMode === "alert_center" ? (
+        <SecurityAlertCenterView />
+      ) : (
       <Panel
         title={`Persisted Analysis Records (${filteredAndSorted.length})`}
         description="Click any row to expand its full explanation summary and risk metadata."
@@ -2634,6 +2749,33 @@ export function HistoryPage() {
                                             <p className="truncate font-semibold text-foreground">{record.model}</p>
                                           </div>
                                         </div>
+
+                                        {/* Incident Dossier Download */}
+                                        <div className="sm:col-span-2 flex flex-wrap items-center justify-between gap-2 border-t border-border pt-3">
+                                          <div className="flex items-center gap-2">
+                                            <span className="text-[11px] text-muted-foreground">Triage Status:</span>
+                                            <span className="rounded border border-primary/20 bg-primary/10 px-2 py-0.5 text-[10px] font-semibold uppercase text-primary">
+                                              {record.reviewStatus ?? "unreviewed"}
+                                            </span>
+                                            {record.reviewNotes && (
+                                              <span className="text-xs text-muted-foreground italic truncate max-w-xs">
+                                                — "{record.reviewNotes}"
+                                              </span>
+                                            )}
+                                          </div>
+                                          <Button
+                                            size="sm"
+                                            variant="outline"
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              void scamlensApi.downloadIncidentPdf(record.id);
+                                            }}
+                                            className="h-8 gap-1.5 text-xs"
+                                          >
+                                            <Download className="size-3.5 text-primary" />
+                                            <span>Export Incident PDF</span>
+                                          </Button>
+                                        </div>
                                       </div>
                                     </div>
                                   </motion.div>
@@ -2698,6 +2840,7 @@ export function HistoryPage() {
           </>
         )}
       </Panel>
+      )}
     </div>
   );
 }

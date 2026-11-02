@@ -1,5 +1,5 @@
 """
-SCAMLENS AI — FastAPI Backend Pydantic Schemas
+SCAMLENS AI - FastAPI Backend Pydantic Schemas
 """
 
 from __future__ import annotations
@@ -13,10 +13,31 @@ from pydantic import BaseModel, Field
 
 class MessageRequest(BaseModel):
     message: str = Field(..., min_length=1, max_length=10000, description="Text message to analyze")
+    user_id: Optional[str] = Field(None, description="Optional authenticated user ID for scan isolation")
 
 
 class UrlRequest(BaseModel):
     url: str = Field(..., min_length=1, max_length=2048, description="URL string to analyze (never fetched)")
+    user_id: Optional[str] = Field(None, description="Optional authenticated user ID for scan isolation")
+
+
+class EmailAnalysisRequest(BaseModel):
+    sender: str = Field("", max_length=500, description="Email sender / From header")
+    subject: str = Field("", max_length=1000, description="Email subject line")
+    body: str = Field(..., min_length=1, max_length=50000, description="Email body text or content")
+    user_id: Optional[str] = Field(None, description="Optional authenticated user ID for scan isolation")
+
+
+class AlertReviewRequest(BaseModel):
+    review_status: str = Field(..., description="Review status: unreviewed, reviewed, flagged_fp, investigating")
+    review_notes: Optional[str] = Field(None, max_length=2000, description="Analyst triage / verification notes")
+    user_id: Optional[str] = Field(None, description="Optional authenticated user ID verifying ownership")
+
+
+class UserFeedbackRequest(BaseModel):
+    scan_id: int = Field(..., description="Target scan ID")
+    actual_label: str = Field(..., description="User perceived label: Legitimate or Scam/Phishing")
+    user_comment: Optional[str] = Field("", max_length=1000, description="Optional comment")
 
 
 # ---------------------------------------------------------------------------
@@ -33,6 +54,11 @@ class AnalysisResponse(BaseModel):
     model: str = "Random Forest"
     scan_id: Optional[int] = None
     timestamp: Optional[str] = None
+    # Rich extensions for Explainable AI & Intelligence
+    explainability: Optional[Dict[str, Any]] = None
+    language_info: Optional[Dict[str, Any]] = None
+    embedded_urls: Optional[List[Dict[str, Any]]] = None
+    url_intelligence: Optional[Dict[str, Any]] = None
 
 
 class HealthResponse(BaseModel):
@@ -65,6 +91,11 @@ class ScanRecord(BaseModel):
     explanation_summary: Optional[str] = None
     indicators: List[str] = []      # empty list if not stored; matches AnalysisResponse
     model: str = "Random Forest"
+    # Security Alert & Multi-user fields
+    user_id: Optional[str] = None
+    review_status: Optional[str] = "unreviewed"
+    review_notes: Optional[str] = None
+    reviewed_at: Optional[str] = None
 
 
 class HistoryResponse(BaseModel):
@@ -74,6 +105,14 @@ class HistoryResponse(BaseModel):
     # Aliases expected by many Lovable-generated frontends
     total: int = 0
     items: List[ScanRecord] = []
+
+
+class AlertsResponse(BaseModel):
+    count: int
+    alerts: List[ScanRecord]
+    unreviewed_count: int = 0
+    high_count: int = 0
+    very_high_count: int = 0
 
 
 class BatchResultItem(BaseModel):
