@@ -71,7 +71,7 @@ app = FastAPI(
 )
 
 # ---------------------------------------------------------------------------
-# CORS — allow local development origins, Lovable domains, and Private Network Access
+# CORS — allow local development origins, Lovable domains, Vercel deployments, and Private Network Access
 # ---------------------------------------------------------------------------
 cors_kwargs = {
     "allow_origins": [
@@ -89,7 +89,9 @@ cors_kwargs = {
         "http://127.0.0.1:8001",
         "http://127.0.0.1:8080",
     ],
-    "allow_origin_regex": r"https://.*\.lovable\.(app|dev)|https://.*\.lovableproject\.com",
+    # Allow HTTPS origins from Lovable preview/production domains and Vercel deployments (*.vercel.app)
+    # Strict regex matching prevents arbitrary external origins without using an insecure wildcard
+    "allow_origin_regex": r"https://.*\.lovable\.(app|dev)|https://.*\.lovableproject\.com|https://.*\.vercel\.app",
     "allow_credentials": True,
     "allow_methods": ["*"],
     "allow_headers": ["*"],
