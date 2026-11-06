@@ -459,10 +459,26 @@ export function DashboardPage() {
       {/* Distribution Panels */}
       <div className="grid gap-6 xl:grid-cols-[1.35fr_1fr]">
         <Panel title="Risk Level Distribution" description="Live breakdown of completed scans across the four severity tiers." delay={0.08}>
-          {records.length ? <HistoryBars records={records} mode="risk" /> : <ChartEmpty label="Risk levels" />}
+          {history.isError ? (
+            <div className="rounded-lg border border-danger/25 bg-danger/5 p-4 text-xs text-danger">
+              Failed to load risk distribution from backend.
+            </div>
+          ) : records.length ? (
+            <HistoryBars records={records} mode="risk" />
+          ) : (
+            <ChartEmpty label="Risk levels" />
+          )}
         </Panel>
         <Panel title="Legitimate vs Scam / Phishing" description="Overall classification balance across all stored records." delay={0.12}>
-          {records.length ? <HistoryBars records={records} mode="prediction" /> : <ChartEmpty label="Prediction classes" />}
+          {history.isError ? (
+            <div className="rounded-lg border border-danger/25 bg-danger/5 p-4 text-xs text-danger">
+              Failed to load classification balance from backend.
+            </div>
+          ) : records.length ? (
+            <HistoryBars records={records} mode="prediction" />
+          ) : (
+            <ChartEmpty label="Prediction classes" />
+          )}
         </Panel>
       </div>
 
@@ -480,7 +496,21 @@ export function DashboardPage() {
             </Button>
           }
         >
-          {records.length ? (
+          {history.isError ? (
+            <div className="flex flex-col items-center justify-center gap-2 rounded-lg border border-danger/25 bg-danger/5 p-6 text-center">
+              <AlertTriangle className="size-6 text-danger" />
+              <p className="text-sm font-semibold text-danger">Unable to load scan history</p>
+              <p className="text-xs text-muted-foreground">{apiError(history.error)}</p>
+              <Button
+                variant="outline"
+                size="sm"
+                className="mt-2 min-h-8 text-xs"
+                onClick={() => history.refetch()}
+              >
+                <RefreshCw className="mr-1.5 size-3.5" /> Retry
+              </Button>
+            </div>
+          ) : records.length ? (
             <div className="space-y-2.5">
               {records.slice(0, 6).map((record, idx) => (
                 <motion.div

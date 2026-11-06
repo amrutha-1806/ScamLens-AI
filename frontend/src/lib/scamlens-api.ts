@@ -50,30 +50,32 @@ const resultSchema = z.object({
 // The backend persists records with a wider field set than the analyze endpoints
 // (content / prediction_label / scam_probability / explanation_summary), so every
 // documented alias is accepted and normalized without inventing missing values.
+// Note: Database columns can be null (e.g. user_id, review_notes, reviewed_at),
+// so fields use .nullish() to accept both null and undefined safely.
 const historyItemSchema = z.object({
   id: z.union([z.string(), z.number()]).transform(String),
-  timestamp: z.string(),
-  input_type: z.string().optional(),
-  type: z.string().optional(),
-  content: z.string().optional(),
-  input_preview: z.string().optional(),
-  message: z.string().optional(),
-  url: z.string().optional(),
-  prediction: z.string().optional(),
-  prediction_label: z.string().optional(),
-  risk_level: z.string().optional(),
-  risk_probability: z.number().optional(),
-  scam_probability: z.number().optional(),
-  risk_score: z.number().optional(),
-  indicators: z.array(z.string()).optional(),
-  guidance: z.string().optional(),
-  explanation_summary: z.string().optional(),
-  model: z.string().optional(),
-  scan_id: z.number().optional(),
-  user_id: z.string().optional(),
-  review_status: z.string().optional(),
-  review_notes: z.string().optional(),
-  reviewed_at: z.string().optional(),
+  timestamp: z.string().nullish().transform((val) => val ?? ""),
+  input_type: z.string().nullish(),
+  type: z.string().nullish(),
+  content: z.string().nullish(),
+  input_preview: z.string().nullish(),
+  message: z.string().nullish(),
+  url: z.string().nullish(),
+  prediction: z.string().nullish(),
+  prediction_label: z.string().nullish(),
+  risk_level: z.string().nullish(),
+  risk_probability: z.number().nullish(),
+  scam_probability: z.number().nullish(),
+  risk_score: z.number().nullish(),
+  indicators: z.union([z.array(z.string()), z.string(), z.any()]).nullish(),
+  guidance: z.string().nullish(),
+  explanation_summary: z.string().nullish(),
+  model: z.string().nullish(),
+  scan_id: z.union([z.number(), z.string()]).nullish(),
+  user_id: z.string().nullish(),
+  review_status: z.string().nullish(),
+  review_notes: z.string().nullish(),
+  reviewed_at: z.string().nullish(),
 }).passthrough();
 
 type HistoryItem = z.infer<typeof historyItemSchema>;
@@ -88,27 +90,40 @@ function mapHistoryRecord(item: HistoryItem): ScanRecord {
       : rawPrediction) as ScanRecord["prediction"];
   const rawFraction = item.risk_probability ?? item.scam_probability;
   // Backend probabilities are 0–1 fractions; a 0–100 value is only scaled for display.
-  const fraction = rawFraction === undefined ? undefined : rawFraction > 1 ? rawFraction / 100 : rawFraction;
+  const fraction = rawFraction === undefined || rawFraction === null ? undefined : rawFraction > 1 ? rawFraction / 100 : rawFraction;
   const rawType = (item.input_type ?? item.type ?? "").toLowerCase();
   const inputType: ScanRecord["inputType"] = rawType === "url" ? "url" : rawType === "email" ? "email" : "message";
+
+  let indicators: string[] = [];
+  if (Array.isArray(item.indicators)) {
+    indicators = item.indicators.map(String);
+  } else if (typeof item.indicators === "string") {
+    try {
+      const parsed = JSON.parse(item.indicators);
+      indicators = Array.isArray(parsed) ? parsed.map(String) : [item.indicators];
+    } catch {
+      indicators = item.indicators ? [item.indicators] : [];
+    }
+  }
+
   return {
     id: item.id,
-    timestamp: item.timestamp,
+    timestamp: item.timestamp ?? "",
     inputType,
     inputPreview: item.input_preview ?? item.content ?? item.message ?? item.url ?? "",
     prediction,
-    riskLevel: (item.risk_level ?? "") as ScanRecord["riskLevel"],
+    riskLevel: (item.risk_level ?? "Low") as ScanRecord["riskLevel"],
     riskProbability: fraction === undefined ? (item.risk_score ?? 0) : fraction * 100,
-    riskScore: item.risk_score,
+    riskScore: item.risk_score ?? (fraction !== undefined ? fraction * 100 : 0),
     riskFraction: fraction,
-    indicators: item.indicators ?? [],
+    indicators,
     guidance: item.guidance ?? item.explanation_summary ?? "",
-    model: item.model ?? "Not provided",
-    scanId: item.scan_id,
-    userId: item.user_id,
+    model: item.model ?? "Random Forest",
+    scanId: typeof item.scan_id === "number" ? item.scan_id : item.scan_id ? Number(item.scan_id) : undefined,
+    userId: item.user_id ?? undefined,
     reviewStatus: (item.review_status as AlertReviewStatus | undefined) ?? "unreviewed",
-    reviewNotes: item.review_notes,
-    reviewedAt: item.reviewed_at,
+    reviewNotes: item.review_notes ?? undefined,
+    reviewedAt: item.reviewed_at ?? undefined,
   };
 }
 
@@ -348,7 +363,10 @@ export const scamlensApi = {
       very_high_count: z.number().optional(),
     }).passthrough();
     const parsed = alertsSchema.safeParse(raw);
-    if (!parsed.success) throw new ScamlensApiError("The backend response did not match the expected alerts format.");
+    if (!parsed.success) {
+      console.warn("[scamlens] /api/alerts parse issues:", parsed.error.issues);
+      throw new ScamlensApiError("The backend response did not match the expected alerts format.");
+    }
     const d = parsed.data;
     const mapped = d.alerts.map(mapHistoryRecord);
     return {
@@ -470,8 +488,12 @@ export const scamlensApi = {
     setTimeout(() => URL.revokeObjectURL(url), 5000);
     return { filename, size: blob.size };
   },
-  getHistory: async (): Promise<ScanRecord[]> => {
-    const raw = await request("/api/history");
+  getHistory: async (userIdOrContext?: unknown): Promise<ScanRecord[]> => {
+    const userId = typeof userIdOrContext === "string" && userIdOrContext.trim().length > 0
+      ? userIdOrContext.trim()
+      : undefined;
+    const path = userId ? `/api/history?user_id=${encodeURIComponent(userId)}` : "/api/history";
+    const raw = await request(path);
     // The backend returns { count, total, records, items }; plain arrays and
     // { history } are also accepted so every documented container shape works.
     const parsed = z.union([
@@ -480,11 +502,13 @@ export const scamlensApi = {
       z.object({ items: z.array(historyItemSchema) }).passthrough(),
       z.object({ history: z.array(historyItemSchema) }).passthrough(),
     ]).safeParse(raw);
-    if (!parsed.success) throw new ScamlensApiError("The backend response did not match the expected history format.");
+    if (!parsed.success) {
+      console.warn("[scamlens] /api/history parse issues:", parsed.error.issues);
+      throw new ScamlensApiError("The backend response did not match the expected history format.");
+    }
     const data = parsed.data as HistoryItem[] | { records?: HistoryItem[]; items?: HistoryItem[]; history?: HistoryItem[] };
     const values = Array.isArray(data) ? data : data.records ?? data.items ?? data.history ?? [];
     return values.map(mapHistoryRecord);
-
   },
 
   getHealth: async (): Promise<HealthStatus> => {
