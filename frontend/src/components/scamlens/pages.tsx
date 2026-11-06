@@ -440,7 +440,7 @@ export function DashboardPage() {
               )}
             >
               <span className={cn("size-2 rounded-full", connected ? "bg-safe animate-pulse" : "bg-warning")} />
-              {health.isLoading ? "Checking backend..." : connected ? "ML Engine Online" : "Backend Unavailable"}
+              {health.isLoading ? "Checking backend..." : connected ? "Connected" : "Backend Unavailable"}
             </span>
           </div>
         }

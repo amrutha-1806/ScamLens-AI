@@ -189,7 +189,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           {(!collapsed || scope === "mobile") && (
             <div className="min-w-0">
               <p className="truncate text-xs font-medium text-sidebar-foreground">
-                {connected ? "ML analysis connected" : "Backend unavailable"}
+                {connected ? "Connected" : "Backend unavailable"}
               </p>
               <p className="mt-0.5 truncate text-[10px] text-muted-foreground">
                 {connected ? "Python service is healthy" : "Static analysis only"}

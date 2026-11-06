@@ -136,7 +136,15 @@ const modelInfoSchema = z.object({
   version: z.string().optional(),
 }).passthrough();
 
-const apiBaseUrl = (import.meta.env["VITE_API_BASE_URL"] as string | undefined)?.replace(/\/$/, "");
+// Resolve API base URL from client build environment (import.meta.env) or server/SSR (process.env)
+const rawApiBaseUrl: string | undefined = (
+  (typeof import.meta !== "undefined" && import.meta.env && (import.meta.env.VITE_API_BASE_URL ?? import.meta.env["VITE_API_BASE_URL"])) ||
+  (typeof process !== "undefined" && process.env && (process.env.VITE_API_BASE_URL ?? process.env.API_BASE_URL))
+) as string | undefined;
+
+const apiBaseUrl = typeof rawApiBaseUrl === "string" && rawApiBaseUrl.trim() !== ""
+  ? rawApiBaseUrl.trim().replace(/\/$/, "")
+  : undefined;
 
 export class ScamlensApiError extends Error {
   constructor(message: string, public status?: number) { super(message); this.name = "ScamlensApiError"; }
