@@ -136,15 +136,54 @@ const modelInfoSchema = z.object({
   version: z.string().optional(),
 }).passthrough();
 
+/**
+ * Normalizes and sanitizes the configured API base URL.
+ * Extracts the valid HTTP/HTTPS origin, safely discarding any inadvertent trailing text
+ * (such as clipboard artifact "copy value" or extra whitespace/slashes), without hardcoding.
+ */
+export function resolveApiBaseUrl(raw: string | undefined): string | undefined {
+  if (!raw || typeof raw !== "string") return undefined;
+
+  let cleaned = raw.trim();
+  if (!cleaned) return undefined;
+
+  // 1. Decode any URI-encoded entities (e.g. "%20copy%20value")
+  try {
+    cleaned = decodeURIComponent(cleaned);
+  } catch {
+    // If malformed URI sequence, keep cleaned as-is
+  }
+
+  // 2. Discard any trailing text after whitespace (e.g. "https://domain.com copy value")
+  cleaned = cleaned.split(/\s+/)[0] || "";
+
+  // 3. Remove common accidental trailing clipboard text or suffixes if concatenated without spaces
+  cleaned = cleaned.replace(/(?:copy\s*value|copy)$/i, "").trim();
+
+  // 4. Strip trailing slashes
+  cleaned = cleaned.replace(/\/+$/, "");
+
+  if (!cleaned) return undefined;
+
+  try {
+    const url = new URL(cleaned);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return undefined;
+    return `${url.origin}${url.pathname === "/" ? "" : url.pathname}`.replace(/\/+$/, "");
+  } catch {
+    if (/^[a-zA-Z0-9.-]+(:\d+)?$/.test(cleaned)) {
+      return `https://${cleaned}`;
+    }
+    return cleaned;
+  }
+}
+
 // Resolve API base URL from client build environment (import.meta.env) or server/SSR (process.env)
 const rawApiBaseUrl: string | undefined = (
   (typeof import.meta !== "undefined" && import.meta.env && (import.meta.env.VITE_API_BASE_URL ?? import.meta.env["VITE_API_BASE_URL"])) ||
   (typeof process !== "undefined" && process.env && (process.env.VITE_API_BASE_URL ?? process.env.API_BASE_URL))
 ) as string | undefined;
 
-const apiBaseUrl = typeof rawApiBaseUrl === "string" && rawApiBaseUrl.trim() !== ""
-  ? rawApiBaseUrl.trim().replace(/\/$/, "")
-  : undefined;
+const apiBaseUrl = resolveApiBaseUrl(rawApiBaseUrl);
 
 export class ScamlensApiError extends Error {
   constructor(message: string, public status?: number) { super(message); this.name = "ScamlensApiError"; }
