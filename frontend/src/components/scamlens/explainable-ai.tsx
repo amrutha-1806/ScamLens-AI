@@ -329,7 +329,7 @@ export function LanguageTransparencyCard({ languageInfo }: { languageInfo: Langu
         <div className="flex items-center gap-2">
           <Globe2 className="size-4 text-primary" />
           <h4 className="text-xs font-bold uppercase tracking-wider text-foreground">
-            Multilingual Script &amp; Regional Analysis
+            Language and Character Check
           </h4>
         </div>
         <span className="rounded-full border border-border bg-secondary px-2.5 py-0.5 font-mono text-[10px] font-semibold text-foreground">

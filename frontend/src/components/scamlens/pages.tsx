@@ -1,4 +1,5 @@
 import { ApiDiagnosticsPanel } from "./api-diagnostics";
+import { ScamLensIcon } from "./logo";
 export { LearnPractisePage } from "./learn-practise-page";
 export { SettingsInformationPage, type SettingsInfoTab } from "./settings-info-page";
 export { SecurityAlertCenterView } from "./alert-center";
@@ -937,10 +938,10 @@ function getEffectiveStructuralChecks(result: AnalysisResult | null): Structural
         : "Unable to Evaluate",
       severity: scheme === "http" ? "warning" : scheme === "https" ? "safe" : "info",
       explanation: !schemeSupplied
-        ? "No web scheme (http:// or https://) was supplied; transport security cannot be verified."
+        ? "No web scheme (http:// or https://) was supplied; connection security cannot be checked."
         : scheme === "http"
-        ? "Unencrypted HTTP scheme detected. Data is sent in cleartext without TLS encryption, vulnerable to interception or tampering."
-        : "Uses HTTPS encryption for data in transit. Important: HTTPS secures connection encryption only; it does NOT prove that the destination website or owner is legitimate or safe.",
+        ? "Unencrypted HTTP: The connection does not use HTTPS encryption."
+        : "Uses HTTPS encryption. Note: HTTPS encrypts data in transit, but does not prove the website owner is safe.",
     },
     {
       id: "url_length_depth",
@@ -950,12 +951,12 @@ function getEffectiveStructuralChecks(result: AnalysisResult | null): Structural
         : "Not Detected",
       severity: (metrics?.url_length ?? 0) > 100 ? "warning" : "safe",
       explanation: (metrics?.url_length ?? 0) > 100
-        ? `Abnormal URL length (${metrics?.url_length} characters). Deceptive links often use excessive length to obscure domains.`
-        : `URL length (${metrics?.url_length ?? "standard"} chars) and path depth are within normal boundaries.`,
+        ? `Long URL: The link is unusually long (${metrics?.url_length} characters). Long links are sometimes used to hide the true destination.`
+        : `URL length (${metrics?.url_length ?? "normal"} chars) is within normal boundaries.`,
     },
     {
       id: "domain_structure",
-      name: "Domain Structure",
+      name: "Website Address Check",
       status: isIp
         ? "Unable to Evaluate"
         : findingCodes.has("typosquatting") || findingCodes.has("brand_impersonation") || findingCodes.has("many_hyphens") || findingCodes.has("high_entropy") || findingCodes.has("suspicious_tld")
@@ -963,14 +964,14 @@ function getEffectiveStructuralChecks(result: AnalysisResult | null): Structural
         : "Not Detected",
       severity: findingCodes.has("typosquatting") || findingCodes.has("brand_impersonation") ? "danger" : findingCodes.has("many_hyphens") ? "warning" : isIp ? "info" : "safe",
       explanation: isIp
-        ? "Domain structure analysis is not applicable because the target host is a numeric IP address."
+        ? "Not applicable because the link uses a numerical IP address instead of a website name."
         : findingCodes.has("typosquatting") || findingCodes.has("brand_impersonation")
-        ? "Suspicious domain structure detected imitating or impersonating a known brand."
-        : "Domain structure adheres to standard conventions with expected character entropy.",
+        ? "The website name closely resembles a known brand, which may be an attempt to mislead visitors."
+        : "The website name follows normal naming patterns without deceptive brand imitations.",
     },
     {
       id: "subdomain_count",
-      name: "Subdomain Count",
+      name: "Subdomains Detected",
       status: isIp
         ? "Unable to Evaluate"
         : (comp?.subdomain_count ?? 0) >= 3 || findingCodes.has("deep_subdomains")
@@ -978,41 +979,41 @@ function getEffectiveStructuralChecks(result: AnalysisResult | null): Structural
         : "Not Detected",
       severity: (comp?.subdomain_count ?? 0) >= 3 ? "warning" : isIp ? "info" : "safe",
       explanation: isIp
-        ? "Subdomain count is not applicable to numeric IP addresses."
+        ? "Subdomain count does not apply to numerical IP addresses."
         : (comp?.subdomain_count ?? 0) >= 3
-        ? `Excessive subdomain nesting (${comp?.subdomain_count} levels). Multi-level subdomains are often used to conceal real domains.`
-        : `Subdomain count (${comp?.subdomain_count ?? 0} levels) is within standard operational range.`,
+        ? `Multiple subdomains: The link uses multiple subdomain levels (${comp?.subdomain_count} levels), which can sometimes disguise the real destination.`
+        : `Normal subdomains: Standard subdomain count (${comp?.subdomain_count ?? 0} levels detected).`,
     },
     {
       id: "raw_ip_hostname",
-      name: "Raw IP Hostname",
+      name: "Raw IP Address",
       status: isIp ? "Detected" : "Not Detected",
       severity: isIp ? "danger" : "safe",
       explanation: isIp
-        ? `Host is a raw numerical IP address (${comp?.ip_address ?? comp?.host}). Legitimate services rarely use raw numeric IPs.`
-        : `Host uses a registered domain name ('${comp?.host ?? ""}'), not a raw IP address.`,
+        ? `Raw IP address: The link uses a numerical IP address instead of a normal website name. While some local or technical services use IP links, public websites usually use registered domain names.`
+        : `The link uses a normal website name ('${comp?.host ?? ""}'), not a raw numerical IP address.`,
     },
     {
       id: "at_symbol_obfuscation",
-      name: "@ Symbol Obfuscation",
+      name: "@ Symbol in Address",
       status: findingCodes.has("userinfo_at") ? "Detected" : "Not Detected",
       severity: findingCodes.has("userinfo_at") ? "danger" : "safe",
       explanation: findingCodes.has("userinfo_at")
-        ? "Deceptive '@' symbol in address authority. Browsers disregard text before '@' and route to the host that follows."
-        : "No '@' symbol credential obfuscation detected in the address authority.",
+        ? "Deceptive @ symbol: Browsers typically ignore text before the '@' and go directly to the address after it."
+        : "No '@' symbol found in the web address.",
     },
     {
       id: "phishing_keywords",
-      name: "Phishing Keywords",
+      name: "Sensitive Keywords",
       status: findingCodes.has("credential_keywords") ? "Detected" : "Not Detected",
       severity: findingCodes.has("credential_keywords") ? "warning" : "safe",
       explanation: findingCodes.has("credential_keywords")
-        ? "Detected sensitive phishing keywords commonly leveraged in credential-harvesting lures."
-        : "No typical phishing or credential-harvesting keywords found in the URL.",
+        ? "Sensitive keywords: The link contains words commonly used in fake login or banking messages (such as verify, login, or account)."
+        : "No typical login or banking keywords were found in the URL.",
     },
     {
       id: "url_shortener_service",
-      name: "URL Shortener Service",
+      name: "URL Shortener Check",
       status: isIp
         ? "Unable to Evaluate"
         : metrics?.is_shortener || findingCodes.has("url_shortener")
@@ -1020,21 +1021,174 @@ function getEffectiveStructuralChecks(result: AnalysisResult | null): Structural
         : "Not Detected",
       severity: metrics?.is_shortener ? "warning" : isIp ? "info" : "safe",
       explanation: isIp
-        ? "Shortener detection is not applicable to numeric IP addresses."
+        ? "Shortener check does not apply to numerical IP addresses."
         : metrics?.is_shortener
-        ? "Identified as a known URL shortening service that conceals the true destination."
-        : "Domain is a direct host name, not an identified URL shortening service.",
+        ? "URL shortener: This link uses a shortening service that hides where the link actually leads until opened."
+        : "Direct destination: This link leads directly to its destination without using a URL shortener.",
     },
     {
       id: "special_character_density",
-      name: "Special Character Density",
+      name: "Special Characters & Symbols",
       status: findingCodes.has("encoded_host") || findingCodes.has("embedded_redirect") ? "Detected" : "Not Detected",
       severity: findingCodes.has("encoded_host") ? "warning" : "safe",
       explanation: findingCodes.has("encoded_host") || findingCodes.has("embedded_redirect")
-        ? "High density of special characters or encoded parameters detected, often used to bypass filters."
-        : "Special character count and encoding patterns are within normal distributions.",
+        ? "The link contains an unusual number of special characters or symbols, which can sometimes be used to bypass security filters."
+        : "Special characters and symbols are within normal expectations.",
     },
   ];
+}
+
+function getTopUrlReasons(result: AnalysisResult): { icon: "alert" | "check"; title: string; explanation: string }[] {
+  const isSuspicious =
+    result.prediction === "Scam/Phishing" ||
+    result.riskLevel === "High" ||
+    result.riskLevel === "Very High";
+
+  const intel = result.urlIntelligence;
+  const comp = intel?.components;
+  const metrics = intel?.metrics;
+  const findings = intel?.findings ?? [];
+  const findingCodes = new Set(findings.map((f) => f.code));
+  const scheme = (comp?.scheme || "").toLowerCase();
+  const isIp = Boolean(comp?.is_ip_address);
+
+  if (isSuspicious) {
+    const reasons: { icon: "alert" | "check"; title: string; explanation: string }[] = [];
+
+    // Reason: Unencrypted HTTP
+    if (scheme === "http") {
+      reasons.push({
+        icon: "alert",
+        title: "Unencrypted HTTP",
+        explanation: "The connection does not use HTTPS encryption.",
+      });
+    }
+
+    // Reason: Raw IP Address
+    if (isIp) {
+      reasons.push({
+        icon: "alert",
+        title: "Raw IP address",
+        explanation: "The link uses a numerical IP address instead of a normal website name.",
+      });
+    }
+
+    // Reason: Sensitive keywords
+    if (
+      findingCodes.has("credential_keywords") ||
+      result.indicators.some((ind) =>
+        /credential|sensitive|urgent|bank|login|account|verify/i.test(ind)
+      )
+    ) {
+      reasons.push({
+        icon: "alert",
+        title: "Sensitive keywords",
+        explanation: "The link contains words commonly used in fake login or banking messages.",
+      });
+    }
+
+    // Reason: Brand impersonation / typosquatting
+    if (intel?.brand_match && intel.brand_match.type !== "official_domain") {
+      reasons.push({
+        icon: "alert",
+        title: "Brand impersonation",
+        explanation: `The web address closely imitates ${intel.brand_match.brand.toUpperCase()} to deceive visitors.`,
+      });
+    }
+
+    // Reason: Suspicious TLD
+    if (metrics?.suspicious_tld || findingCodes.has("suspicious_tld")) {
+      reasons.push({
+        icon: "alert",
+        title: "Domain extension check",
+        explanation: `The link uses a domain extension (.${comp?.tld ?? "tld"}) frequently abused for deceptive sites.`,
+      });
+    }
+
+    // Reason: URL Shortener
+    if (metrics?.is_shortener || findingCodes.has("url_shortener")) {
+      reasons.push({
+        icon: "alert",
+        title: "Hidden destination",
+        explanation: "The link uses a URL shortener that conceals where it really leads.",
+      });
+    }
+
+    // Reason: Unusual URL pattern (high entropy)
+    if ((metrics?.domain_entropy_bits ?? 0) > 3.8 || findingCodes.has("high_entropy")) {
+      reasons.push({
+        icon: "alert",
+        title: "Unusual URL pattern",
+        explanation: "The website name contains an unusually randomized character sequence.",
+      });
+    }
+
+    // Reason: Unusually long URL
+    if ((metrics?.url_length ?? 0) > 100 || findingCodes.has("long_url")) {
+      reasons.push({
+        icon: "alert",
+        title: "Unusually long link",
+        explanation: "The website link is unusually long, which is sometimes used to disguise the true destination.",
+      });
+    }
+
+    // Reason: Multiple subdomains
+    if ((comp?.subdomain_count ?? 0) >= 3 || findingCodes.has("deep_subdomains")) {
+      reasons.push({
+        icon: "alert",
+        title: "Multiple subdomains",
+        explanation: "The link contains multiple subdomain levels, which can disguise the real website address.",
+      });
+    }
+
+    // Fallback from indicators or general ML classification if no specific heuristic fired
+    if (reasons.length === 0) {
+      const filteredInds = result.indicators
+        .filter((ind) => !ind.toLowerCase().startsWith("web url detected"))
+        .slice(0, 3);
+      if (filteredInds.length > 0) {
+        for (const ind of filteredInds) {
+          reasons.push({
+            icon: "alert",
+            title: "Flagged risk factor",
+            explanation: ind.replace(/^\[URL\]\s*/i, ""),
+          });
+        }
+      } else {
+        reasons.push({
+          icon: "alert",
+          title: "Statistical pattern",
+          explanation: "The machine learning classifier identified statistical patterns similar to known deceptive links.",
+        });
+      }
+    }
+
+    // Return 3 or fewer important reasons
+    return reasons.slice(0, 3);
+  }
+
+  // Legitimate / Low Risk: Top positive observations (up to 3)
+  const observations: { icon: "alert" | "check"; title: string; explanation: string }[] = [];
+  if (scheme === "https") {
+    observations.push({
+      icon: "check",
+      title: "HTTPS encryption",
+      explanation: "The connection uses HTTPS encryption to protect data in transit.",
+    });
+  }
+  if (!isIp && comp?.host) {
+    observations.push({
+      icon: "check",
+      title: "Standard website name",
+      explanation: "The link uses a registered website address, not a raw numerical IP address.",
+    });
+  }
+  observations.push({
+    icon: "check",
+    title: "No suspicious keywords",
+    explanation: "No fake login, banking, or credential-harvesting words were detected.",
+  });
+  return observations.slice(0, 3);
 }
 
 export function UrlAnalyzerPage() {
@@ -1043,6 +1197,8 @@ export function UrlAnalyzerPage() {
   const [status, setStatus] = useState<RequestStatus>("idle");
   const [error, setError] = useState("");
   const [result, setResult] = useState<AnalysisResult | null>(null);
+  const [showChecks, setShowChecks] = useState(false);
+  const [showTechnical, setShowTechnical] = useState(false);
   const queryClient = useQueryClient();
 
   async function analyze() {
@@ -1063,6 +1219,8 @@ export function UrlAnalyzerPage() {
     }
     setStatus("loading");
     setResult(null);
+    setShowChecks(false);
+    setShowTechnical(false);
     try {
       const response = await scamlensApi.analyzeUrl({ url: trimmed });
       setResult(response);
@@ -1074,11 +1232,17 @@ export function UrlAnalyzerPage() {
     }
   }
 
+  const isScam = result?.prediction === "Scam/Phishing";
+  const isSuspicious = isScam || result?.riskLevel === "High" || result?.riskLevel === "Very High";
+  const pct = Math.min(100, Math.max(0, result?.riskProbability ?? 0));
+  const topReasons = result ? getTopUrlReasons(result) : [];
+  const structuralChecks = result ? getEffectiveStructuralChecks(result) : [];
+
   return (
     <div className="space-y-7">
       <PageHeader
         eyebrow="Zero-Execution Lexical Inspection"
-        title="Static URL Analyzer"
+        title="URL Safety Analysis"
         description="Evaluate suspicious web links for phishing patterns, domain obfuscation, and structural anomalies without ever visiting or executing the target address."
       />
 
@@ -1130,7 +1294,7 @@ export function UrlAnalyzerPage() {
           <span className="flex items-start gap-2 sm:items-center">
             <LockKeyhole className="mt-0.5 size-3.5 shrink-0 text-safe sm:mt-0" />
             <span>
-              <strong>Safety Guarantee:</strong> SCAMLENS AI never opens, fetches, renders, or navigates to submitted URLs.
+              <strong>Safety Guarantee:</strong> The analyzer checks the URL as text without opening or contacting the website.
             </span>
           </span>
           <span className="font-mono">{url.length} / 2,048 chars</span>
@@ -1173,154 +1337,304 @@ export function UrlAnalyzerPage() {
         </div>
       </Panel>
 
-      <div className="grid gap-6 xl:grid-cols-[1.1fr_.9fr]">
-        <Panel
-          title="Static Lexical & Structural Checks"
-          description="9 structural dimensions inspected by the Python URL feature extractor."
-          delay={0.08}
-        >
-          {!result ? (
+      {/* URL Analysis Results */}
+      <AnimatePresence mode="wait">
+        {result ? (
+          <motion.div
+            key={`url-result-${result.scanId ?? result.timestamp ?? result.riskProbability}`}
+            initial={shouldReduceMotion ? false : { opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={shouldReduceMotion ? { opacity: 1 } : { opacity: 0, y: -6 }}
+            transition={{ duration: shouldReduceMotion ? 0 : 0.24 }}
+            className="space-y-5"
+          >
+            {/* 1. Risk Level and Risk Score */}
+            <div
+              className={cn(
+                "rounded-xl border p-5 shadow-panel sm:p-6",
+                isScam
+                  ? "border-danger/45 bg-gradient-to-br from-danger/15 via-card to-card"
+                  : isSuspicious
+                  ? "border-warning/45 bg-gradient-to-br from-warning/15 via-card to-card"
+                  : "border-safe/40 bg-gradient-to-br from-safe/12 via-card to-card"
+              )}
+            >
+              <div className="flex flex-wrap items-center justify-between gap-4">
+                <div className="flex items-center gap-3.5">
+                  <div
+                    className={cn(
+                      "grid size-12 shrink-0 place-items-center rounded-xl border",
+                      isScam
+                        ? "border-danger/40 bg-danger/20 text-danger"
+                        : isSuspicious
+                        ? "border-warning/40 bg-warning/20 text-warning"
+                        : "border-safe/40 bg-safe/20 text-safe"
+                    )}
+                  >
+                    {isScam ? <ShieldAlert className="size-6" /> : isSuspicious ? <AlertTriangle className="size-6" /> : <ShieldCheck className="size-6" />}
+                  </div>
+                  <div>
+                    <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                      Security Verdict
+                    </p>
+                    <h3 className={cn("text-xl font-bold sm:text-2xl", isScam ? "text-danger" : isSuspicious ? "text-warning" : "text-safe")}>
+                      {result.prediction}
+                    </h3>
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className={cn("rounded-full border px-3.5 py-1 text-xs font-semibold", badgeClassForRisk(result.riskLevel))}>
+                    {result.riskLevel} Risk
+                  </span>
+                  <span className="rounded-full border border-border bg-secondary px-3.5 py-1 font-mono text-xs font-bold text-foreground">
+                    Score: {formatProbability(pct)}
+                  </span>
+                </div>
+              </div>
+
+              {/* Visual Risk Score Bar */}
+              <div className="mt-5">
+                <div className="mb-1.5 flex items-center justify-between text-xs">
+                  <span className="text-muted-foreground">Risk Probability Meter</span>
+                  <span className="font-mono font-semibold text-foreground">{formatProbability(pct)}</span>
+                </div>
+                <div className="h-3 w-full overflow-hidden rounded-full bg-secondary">
+                  <motion.div
+                    initial={shouldReduceMotion ? false : { width: 0 }}
+                    animate={{ width: `${pct}%` }}
+                    transition={{ duration: shouldReduceMotion ? 0 : 0.6, ease: "easeOut" }}
+                    className={cn(
+                      "h-full rounded-full",
+                      result.riskLevel === "Low"
+                        ? "bg-safe"
+                        : result.riskLevel === "Suspicious"
+                        ? "bg-warning"
+                        : "bg-danger"
+                    )}
+                  />
+                </div>
+              </div>
+
+              {/* Verified Safety Statement */}
+              <div className="mt-4 flex items-center gap-2 text-xs text-muted-foreground">
+                <ShieldCheck className="size-4 shrink-0 text-safe" />
+                <span>The analyzer checks the URL as text without opening or contacting the website.</span>
+              </div>
+            </div>
+
+            {/* 2. Short Recommended Security Action */}
+            <div className="rounded-xl border border-primary/25 bg-primary/5 p-4 sm:p-5">
+              <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-foreground">
+                <LockKeyhole className="size-4 text-primary" />
+                Recommended Security Action
+              </p>
+              <p className="mt-2 text-sm leading-6 text-foreground font-medium">{result.guidance}</p>
+            </div>
+
+            {/* 3. Three or fewer important reasons explaining the suspicious URL */}
+            <div className="rounded-xl border border-border bg-card p-4 shadow-panel sm:p-5">
+              <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-foreground">
+                {isSuspicious ? <ShieldAlert className="size-4 text-danger" /> : <ShieldCheck className="size-4 text-safe" />}
+                {isSuspicious ? "Why This Link Looks Suspicious" : "Key Safety Observations"}
+                <span className="text-muted-foreground font-normal lowercase">({topReasons.length} key points)</span>
+              </p>
+              <div className="mt-3.5 space-y-2.5">
+                {topReasons.map((reason, idx) => (
+                  <div
+                    key={idx}
+                    className="flex items-start gap-3 rounded-lg border border-border bg-secondary/25 p-3 text-xs"
+                  >
+                    {reason.icon === "alert" ? (
+                      <AlertTriangle className="mt-0.5 size-4 shrink-0 text-warning" />
+                    ) : (
+                      <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-safe" />
+                    )}
+                    <div>
+                      <span className="font-semibold text-foreground">{reason.title}: </span>
+                      <span className="text-muted-foreground">{reason.explanation}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* 4. Additional URL Checks in a clean, expandable section */}
+            <div className="rounded-xl border border-border bg-card shadow-panel overflow-hidden">
+              <button
+                type="button"
+                onClick={() => setShowChecks(!showChecks)}
+                className="flex w-full items-center justify-between p-4 text-left font-semibold text-foreground hover:bg-secondary/30 transition-colors sm:p-5"
+              >
+                <div className="flex items-center gap-2.5">
+                  <ListChecks className="size-4 text-primary" />
+                  <span className="text-sm">Additional URL Checks ({structuralChecks.length} Checks)</span>
+                </div>
+                <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <span>{showChecks ? "Hide Checks" : "Show All 9 Checks"}</span>
+                  {showChecks ? <ChevronUp className="size-4" /> : <ChevronDown className="size-4" />}
+                </div>
+              </button>
+
+              {showChecks && (
+                <div className="border-t border-border p-4 sm:p-5 bg-secondary/10">
+                  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                    {structuralChecks.map((check, idx) => {
+                      const Icon = urlCheckIcons[check.id] ?? ShieldCheck;
+                      const isDetected = check.status === "Detected";
+                      const isSafe = check.status === "Not Detected";
+
+                      return (
+                        <div
+                          key={check.id}
+                          className={cn(
+                            "flex flex-col justify-between rounded-lg border p-3.5 transition-all duration-200",
+                            isDetected
+                              ? check.severity === "danger"
+                                ? "border-danger/40 bg-danger/5 shadow-[0_0_15px_-6px_rgba(244,63,94,0.18)]"
+                                : "border-warning/40 bg-warning/5 shadow-[0_0_15px_-6px_rgba(245,158,11,0.18)]"
+                              : isSafe
+                              ? "border-safe/30 bg-safe/5"
+                              : "border-border bg-secondary/25"
+                          )}
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="flex items-center gap-2">
+                              <Icon
+                                className={cn(
+                                  "size-4 shrink-0",
+                                  isDetected
+                                    ? check.severity === "danger"
+                                      ? "text-danger"
+                                      : "text-warning"
+                                    : isSafe
+                                    ? "text-safe"
+                                    : "text-muted-foreground"
+                                )}
+                              />
+                              <span className="text-xs font-semibold text-foreground">{check.name}</span>
+                            </div>
+                            <span
+                              className={cn(
+                                "inline-flex items-center gap-1 rounded px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider transition-colors",
+                                isDetected
+                                  ? check.severity === "danger"
+                                    ? "border border-danger/30 bg-danger/15 text-danger"
+                                    : "border border-warning/30 bg-warning/15 text-warning"
+                                  : isSafe
+                                  ? "border border-safe/30 bg-safe/15 text-safe"
+                                  : "border border-border bg-secondary text-muted-foreground"
+                              )}
+                            >
+                              {isDetected ? (
+                                <AlertTriangle className="size-2.5" />
+                              ) : isSafe ? (
+                                <CheckCircle2 className="size-2.5" />
+                              ) : (
+                                <Info className="size-2.5" />
+                              )}
+                              {check.status}
+                            </span>
+                          </div>
+                          <p className="mt-2.5 text-[11px] leading-relaxed text-muted-foreground">
+                            {check.explanation}
+                          </p>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* 5. Technical Details only when the user expands the section */}
+            <div className="rounded-xl border border-border bg-card shadow-panel overflow-hidden">
+              <button
+                type="button"
+                onClick={() => setShowTechnical(!showTechnical)}
+                className="flex w-full items-center justify-between p-4 text-left font-semibold text-foreground hover:bg-secondary/30 transition-colors sm:p-5"
+              >
+                <div className="flex items-center gap-2.5">
+                  <Cpu className="size-4 text-primary" />
+                  <span className="text-sm">Technical Details &amp; Machine Learning Info</span>
+                </div>
+                <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <span>{showTechnical ? "Hide Details" : "Show Details"}</span>
+                  {showTechnical ? <ChevronUp className="size-4" /> : <ChevronDown className="size-4" />}
+                </div>
+              </button>
+
+              {showTechnical && (
+                <div className="border-t border-border p-4 sm:p-5 bg-secondary/10 space-y-4">
+                  {/* URL Intelligence Card (with updated labels and clean design) */}
+                  {result.urlIntelligence && (
+                    <UrlIntelligenceCard intelligence={result.urlIntelligence} />
+                  )}
+
+                  {/* Language and Character Check */}
+                  {result.languageInfo && (
+                    <LanguageTransparencyCard languageInfo={result.languageInfo} />
+                  )}
+
+                  {/* Model & Audit Meta */}
+                  <div className="grid grid-cols-2 gap-2.5 text-xs sm:grid-cols-4">
+                    <div className="rounded-lg border border-border bg-card p-3">
+                      <span className="text-[10px] text-muted-foreground">Classifier Model</span>
+                      <p className="mt-1 font-semibold text-foreground truncate">{result.model}</p>
+                    </div>
+                    <div className="rounded-lg border border-border bg-card p-3">
+                      <span className="text-[10px] text-muted-foreground">Audit Scan ID</span>
+                      <p className="mt-1 font-mono font-semibold text-primary">#{result.scanId ?? "—"}</p>
+                    </div>
+                    <div className="rounded-lg border border-border bg-card p-3">
+                      <span className="text-[10px] text-muted-foreground">Raw Probability</span>
+                      <p className="mt-1 font-mono font-semibold text-foreground">{formatProbability(result.riskProbability)}</p>
+                    </div>
+                    <div className="rounded-lg border border-border bg-card p-3">
+                      <span className="text-[10px] text-muted-foreground">Recorded Time</span>
+                      <p className="mt-1 text-[11px] text-muted-foreground truncate">{formatTime(result.timestamp ?? "")}</p>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          </motion.div>
+        ) : status === "loading" ? (
+          <Panel title="Analyzing URL Structure" description="Querying the static feature extraction service..." delay={0.08}>
+            <div className="space-y-4">
+              <ApiNotice
+                kind="loading"
+                message="Inspecting URL lexical structure and querying the Python Random Forest service..."
+              />
+              <div className="relative overflow-hidden rounded-lg border border-primary/30 bg-primary/5 p-5 dark:border-cyan-500/30 dark:bg-slate-950/80">
+                <div className="flex items-center gap-3 text-xs font-medium text-primary dark:text-cyan-300">
+                  <span className="size-2.5 shrink-0 rounded-full bg-primary animate-ping dark:bg-cyan-400" />
+                  <span>The analyzer checks the URL as text without opening or contacting the website...</span>
+                </div>
+                <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-secondary dark:bg-slate-800">
+                  <div className="h-full w-2/3 animate-pulse rounded-full bg-gradient-to-r from-primary to-accent dark:from-cyan-500 dark:to-teal-400" />
+                </div>
+              </div>
+            </div>
+          </Panel>
+        ) : (
+          <Panel
+            title="URL Safety Analysis"
+            description="Static lexical pattern recognition with zero network execution."
+            delay={0.08}
+          >
             <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border/80 bg-secondary/15 py-12 px-4 text-center">
               <div className="grid size-12 place-items-center rounded-xl border border-primary/20 bg-primary/10 text-primary mb-3">
                 <Link2 className="size-6" />
               </div>
-              <h4 className="text-sm font-semibold text-foreground">Enter a URL to begin security analysis.</h4>
+              <h4 className="text-sm font-semibold text-foreground">Enter a URL to begin safety analysis.</h4>
               <p className="mt-1.5 max-w-md text-xs text-muted-foreground leading-relaxed">
-                SCAMLENS AI evaluates 9 structural and lexical dimensions statically using Python pattern recognition, with zero network execution or web requests.
+                The analyzer checks the URL as text without opening or contacting the website. Structural patterns, domain names, and suspicious keywords are evaluated statically.
               </p>
             </div>
-          ) : (
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              {getEffectiveStructuralChecks(result).map((check, idx) => {
-                const Icon = urlCheckIcons[check.id] ?? ShieldCheck;
-                const isDetected = check.status === "Detected";
-                const isSafe = check.status === "Not Detected";
-
-                return (
-                  <motion.div
-                    key={check.id}
-                    initial={shouldReduceMotion ? false : { opacity: 0, y: 8 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    whileHover={shouldReduceMotion ? { y: 0 } : { y: -2 }}
-                    transition={{
-                      duration: shouldReduceMotion ? 0 : 0.22,
-                      delay: shouldReduceMotion ? 0 : idx * 0.03,
-                    }}
-                    className={cn(
-                      "flex flex-col justify-between rounded-lg border p-3.5 transition-all duration-200",
-                      isDetected
-                        ? check.severity === "danger"
-                          ? "border-danger/40 bg-danger/5 shadow-[0_0_15px_-6px_rgba(244,63,94,0.18)]"
-                          : "border-warning/40 bg-warning/5 shadow-[0_0_15px_-6px_rgba(245,158,11,0.18)]"
-                        : isSafe
-                        ? "border-safe/30 bg-safe/5"
-                        : "border-border bg-secondary/25"
-                    )}
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="flex items-center gap-2">
-                        <Icon
-                          className={cn(
-                            "size-4 shrink-0",
-                            isDetected
-                              ? check.severity === "danger"
-                                ? "text-danger"
-                                : "text-warning"
-                              : isSafe
-                              ? "text-safe"
-                              : "text-muted-foreground"
-                          )}
-                        />
-                        <span className="text-xs font-semibold text-foreground">{check.name}</span>
-                      </div>
-                      <span
-                        className={cn(
-                          "inline-flex items-center gap-1 rounded px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider transition-colors",
-                          isDetected
-                            ? check.severity === "danger"
-                              ? "border border-danger/30 bg-danger/15 text-danger"
-                              : "border border-warning/30 bg-warning/15 text-warning"
-                            : isSafe
-                            ? "border border-safe/30 bg-safe/15 text-safe"
-                            : "border border-border bg-secondary text-muted-foreground"
-                        )}
-                      >
-                        {isDetected ? (
-                          <AlertTriangle className="size-2.5" />
-                        ) : isSafe ? (
-                          <CheckCircle2 className="size-2.5" />
-                        ) : (
-                          <Info className="size-2.5" />
-                        )}
-                        {check.status}
-                      </span>
-                    </div>
-                    <p className="mt-2.5 text-[11px] leading-relaxed text-muted-foreground">
-                      {check.explanation}
-                    </p>
-                  </motion.div>
-                );
-              })}
-            </div>
-          )}
-        </Panel>
-
-        <Panel title="URL Risk Assessment" description="Classification verdict, indicators, and security recommendation." delay={0.12}>
-          <AnimatePresence mode="wait">
-            {result ? (
-              <motion.div
-                key={`url-result-${result.scanId ?? result.timestamp ?? result.riskProbability}`}
-                initial={shouldReduceMotion ? false : { opacity: 0, y: 8 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={shouldReduceMotion ? { opacity: 1 } : { opacity: 0, y: -6 }}
-                transition={{ duration: shouldReduceMotion ? 0 : 0.24 }}
-              >
-                <AnalysisResultView result={result} />
-              </motion.div>
-            ) : status === "loading" ? (
-              <motion.div
-                key="url-loading"
-                initial={shouldReduceMotion ? false : { opacity: 0, y: 6 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={shouldReduceMotion ? { opacity: 1 } : { opacity: 0 }}
-                transition={{ duration: shouldReduceMotion ? 0 : 0.2 }}
-                className="space-y-4"
-              >
-                <ApiNotice
-                  kind="loading"
-                  message="Inspecting URL lexical structure and querying the Python Random Forest service..."
-                />
-                <div className="relative overflow-hidden rounded-lg border border-primary/30 bg-primary/5 p-5 dark:border-cyan-500/30 dark:bg-slate-950/80">
-                  <div className="flex items-center gap-3 text-xs font-medium text-primary dark:text-cyan-300">
-                    <span className="size-2.5 shrink-0 rounded-full bg-primary animate-ping dark:bg-cyan-400" />
-                    <span>Running zero-execution static lexical check on FastAPI backend...</span>
-                  </div>
-                  <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-secondary dark:bg-slate-800">
-                    <div className="h-full w-2/3 animate-pulse rounded-full bg-gradient-to-r from-primary to-accent dark:from-cyan-500 dark:to-teal-400" />
-                  </div>
-                </div>
-              </motion.div>
-            ) : (
-              <motion.div
-                key={`url-idle-${status}`}
-                initial={shouldReduceMotion ? false : { opacity: 0, y: 6 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={shouldReduceMotion ? { opacity: 1 } : { opacity: 0 }}
-                transition={{ duration: shouldReduceMotion ? 0 : 0.2 }}
-              >
-                <ApiNotice
-                  kind={status}
-                  message={
-                    status === "error"
-                      ? error
-                      : "Submit a URL above to view its phishing probability and structural indicators."
-                  }
-                />
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </Panel>
-      </div>
+          </Panel>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
@@ -3166,19 +3480,22 @@ export function ReportsPage() {
           >
             {/* Document Header */}
             <div className="flex flex-wrap items-start justify-between gap-4 border-b border-border pb-4">
-              <div>
-                <p className="text-[11px] font-semibold uppercase tracking-widest text-primary">
-                  Official Threat Intelligence Audit
-                </p>
-                <h3 className="mt-1 text-base font-bold text-foreground sm:text-lg">
-                  SCAMLENS AI Security Analysis Report
-                </h3>
-                <p className="mt-0.5 text-xs text-muted-foreground">
-                  Scope: <strong>{scopeLabel}</strong> • Window: <strong>{periodLabel}</strong>
-                </p>
+              <div className="flex items-center gap-3">
+                <ScamLensIcon size={38} glow={false} />
+                <div>
+                  <p className="text-[11px] font-semibold uppercase tracking-widest text-primary">
+                    Official Threat Intelligence Audit
+                  </p>
+                  <h3 className="mt-0.5 text-base font-bold text-foreground sm:text-lg">
+                    SCAMLENS AI Security Analysis Report
+                  </h3>
+                  <p className="mt-0.5 text-xs text-muted-foreground">
+                    Scope: <strong>{scopeLabel}</strong> • Window: <strong>{periodLabel}</strong>
+                  </p>
+                </div>
               </div>
               <div className="flex items-center gap-2 rounded-lg border border-primary/30 bg-primary/10 px-3 py-2 text-xs font-semibold text-primary">
-                <ShieldCheck className="size-5" />
+                <ShieldCheck className="size-4" />
                 <span>Verified ML Audit</span>
               </div>
             </div>

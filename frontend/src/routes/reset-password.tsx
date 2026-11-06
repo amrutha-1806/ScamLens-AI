@@ -1,6 +1,7 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useState, type FormEvent } from "react";
-import { Loader2, ShieldCheck } from "lucide-react";
+import { Loader2 } from "lucide-react";
+import { ScamLensIcon } from "@/components/scamlens/logo";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -42,7 +43,7 @@ function ResetPasswordPage() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-background bg-chart-grid px-4">
       <form onSubmit={submit} className="w-full max-w-md space-y-4 rounded-xl border border-border bg-card/80 p-7 shadow-xl backdrop-blur-md" noValidate>
-        <div className="flex items-center gap-3"><div className="grid size-10 place-items-center rounded-md bg-primary text-primary-foreground"><ShieldCheck className="size-5" /></div><h1 className="text-xl font-semibold text-foreground">Set a new password</h1></div>
+        <div className="flex items-center gap-3"><ScamLensIcon size={36} /><h1 className="text-xl font-semibold text-foreground">Set a new password</h1></div>
         <div className="space-y-1.5"><Label htmlFor="pw">New password</Label><Input id="pw" type="password" autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)} /></div>
         <div className="space-y-1.5"><Label htmlFor="pw2">Confirm password</Label><Input id="pw2" type="password" autoComplete="new-password" value={confirm} onChange={(e) => setConfirm(e.target.value)} /></div>
         {error && <p role="alert" className="rounded-md border border-danger/40 bg-danger/10 px-3 py-2 text-sm text-danger">{error}</p>}

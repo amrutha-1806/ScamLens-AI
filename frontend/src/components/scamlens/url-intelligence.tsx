@@ -44,9 +44,9 @@ export function UrlIntelligenceCard({ intelligence }: { intelligence: UrlIntelli
             <Link2 className="size-5" />
           </div>
           <div>
-            <h4 className="text-sm font-bold text-foreground">Deep Static URL Intelligence</h4>
+            <h4 className="text-sm font-bold text-foreground">URL Safety Analysis</h4>
             <p className="text-[11px] text-muted-foreground">
-              Zero network execution • Shannon domain entropy, typosquatting &amp; structural heuristics.
+              Zero network execution • Structural pattern recognition, domain checks &amp; heuristics.
             </p>
           </div>
         </div>
@@ -75,9 +75,8 @@ export function UrlIntelligenceCard({ intelligence }: { intelligence: UrlIntelli
       <div className="flex items-start gap-2.5 rounded-lg border border-safe/30 bg-safe/5 p-3 text-xs leading-relaxed text-muted-foreground dark:border-emerald-900/40 dark:bg-emerald-950/20">
         <ShieldCheck className="mt-0.5 size-4 shrink-0 text-safe dark:text-emerald-400" />
         <div>
-          <strong className="text-foreground dark:text-emerald-300">Zero Execution Guarantee: </strong>
-          This URL was analyzed purely as a static character sequence. It was NEVER resolved via DNS, connected to,
-          fetched, rendered, or opened. Your workstation and IP are completely protected.
+          <strong className="text-foreground dark:text-emerald-300">Safety Guarantee: </strong>
+          The analyzer checks the URL as text without opening or contacting the website.
         </div>
       </div>
 
@@ -156,19 +155,19 @@ export function UrlIntelligenceCard({ intelligence }: { intelligence: UrlIntelli
               : "border-border bg-secondary/25 text-muted-foreground"
           )}
         >
-          <span className="text-[10px] font-semibold uppercase tracking-wider">TLD Reputation</span>
+          <span className="text-[10px] font-semibold uppercase tracking-wider">Domain Extension Check</span>
           <p className="mt-1 font-semibold text-foreground">
             {components.tld ? `.${components.tld}` : "None"} {metrics.suspicious_tld ? "(Frequently Abused)" : "(Standard)"}
           </p>
         </div>
       </div>
 
-      {/* Shannon Domain Entropy Gauge */}
+      {/* Unusual URL Pattern Gauge */}
       <div className="rounded-lg border border-border bg-secondary/20 p-3.5">
         <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
           <div className="flex items-center gap-2">
             <Radar className="size-4 text-primary" />
-            <span className="font-semibold text-foreground">Shannon Host Entropy</span>
+            <span className="font-semibold text-foreground">Unusual URL Pattern</span>
           </div>
           <div className="flex items-center gap-2">
             <span className={cn("font-mono font-bold", entropyColor)}>{entropy.toFixed(3)} bits/char</span>
@@ -188,8 +187,7 @@ export function UrlIntelligenceCard({ intelligence }: { intelligence: UrlIntelli
           />
         </div>
         <p className="mt-1.5 text-[10px] text-muted-foreground">
-          Calculates character distribution randomness. High entropy (&gt; 3.8) frequently indicates algorithmically
-          generated domains (DGA) or anti-detection evasion.
+          Measures character randomness in the website name. High randomness often indicates machine-generated links or evasion attempts.
         </p>
       </div>
 
@@ -202,11 +200,11 @@ export function UrlIntelligenceCard({ intelligence }: { intelligence: UrlIntelli
             <p className="font-mono font-semibold text-foreground">{components.scheme}://</p>
           </div>
           <div className="rounded border border-border bg-secondary/25 p-2.5">
-            <span className="text-[10px] text-muted-foreground">Registrable Domain</span>
+            <span className="text-[10px] text-muted-foreground">Website Address</span>
             <p className="truncate font-mono font-semibold text-foreground">{components.registrable_domain || "—"}</p>
           </div>
           <div className="rounded border border-border bg-secondary/25 p-2.5">
-            <span className="text-[10px] text-muted-foreground">Subdomain Depth</span>
+            <span className="text-[10px] text-muted-foreground">Subdomains Detected</span>
             <p className="font-mono font-semibold text-foreground">{components.subdomain_count} level(s)</p>
           </div>
           <div className="rounded border border-border bg-secondary/25 p-2.5">
@@ -219,7 +217,7 @@ export function UrlIntelligenceCard({ intelligence }: { intelligence: UrlIntelli
       {/* Static Findings List */}
       {findings.length > 0 && (
         <div className="space-y-2">
-          <p className="text-xs font-semibold text-foreground">Static Heuristic Findings ({findings.length})</p>
+          <p className="text-xs font-semibold text-foreground">Why This Link Looks Suspicious ({findings.length})</p>
           <div className="space-y-1.5">
             {findings.map((f, i) => (
               <div

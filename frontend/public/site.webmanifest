@@ -1,0 +1,26 @@
+{
+  "name": "SCAMLENS AI",
+  "short_name": "SCAMLENS",
+  "description": "Intelligent scam and phishing detection workspace. See the risk before you click.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#091427",
+  "theme_color": "#091427",
+  "icons": [
+    {
+      "src": "/apple-touch-icon.png",
+      "sizes": "180x180",
+      "type": "image/png"
+    },
+    {
+      "src": "/assets/scamlens-icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ]
+}

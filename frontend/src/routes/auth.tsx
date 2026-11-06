@@ -25,6 +25,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ThemeSwitcher } from "@/components/scamlens/primitives";
+import { ScamLensIcon } from "@/components/scamlens/logo";
 import { formatAuthError } from "@/lib/auth-error-helper";
 import { useScamlensPreferences } from "@/lib/scamlens-preferences";
 import { cn } from "@/lib/utils";
@@ -428,13 +429,13 @@ function AuthPage() {
                   AI-POWERED PROTECTION
                 </motion.div>
 
-                {/* Animated SCAMLENS AI Shield Emblem with Gentle Glow Pulse */}
+                {/* Official SCAMLENS AI Shield & Scanning Lens Brand Emblem */}
                 <motion.div
                   initial={shouldReduceMotion ? false : { opacity: 0, scale: 0.88 }}
                   animate={{ opacity: 1, scale: 1 }}
-                  whileHover={shouldReduceMotion ? { scale: 1 } : { scale: 1.05, y: -1 }}
+                  whileHover={shouldReduceMotion ? { scale: 1 } : { scale: 1.05, y: -2 }}
                   transition={{ duration: shouldReduceMotion ? 0 : 0.35, ease: "easeOut" }}
-                  className="relative mt-2.5"
+                  className="relative mt-2.5 flex justify-center"
                 >
                   <motion.div
                     animate={
@@ -443,11 +444,9 @@ function AuthPage() {
                         : { opacity: [0.35, 0.75, 0.35], scale: [0.95, 1.08, 0.95] }
                     }
                     transition={{ duration: 3.6, repeat: Infinity, ease: "easeInOut" }}
-                    className="pointer-events-none absolute -inset-2.5 rounded-2xl bg-cyan-400/30 blur-md"
+                    className="pointer-events-none absolute -inset-3 rounded-full bg-cyan-400/25 blur-lg"
                   />
-                  <div className="relative grid size-12 place-items-center rounded-2xl border border-sky-400/50 bg-gradient-to-br from-sky-400/25 via-cyan-300/20 to-white text-sky-700 shadow-[0_8px_24px_rgba(14,165,233,0.25),inset_0_1px_1px_rgba(255,255,255,0.6)] dark:border-cyan-300/45 dark:from-cyan-400/25 dark:via-sky-500/20 dark:to-[#09152B] dark:text-cyan-200 dark:shadow-[0_8px_24px_rgba(34,211,238,0.28),inset_0_1px_1px_rgba(255,255,255,0.25)]">
-                    <ShieldCheck className="size-6 drop-shadow-[0_0_8px_rgba(34,211,238,0.65)]" />
-                  </div>
+                  <ScamLensIcon size={56} glow={true} />
                 </motion.div>
 
                 {/* Staggered Fade-and-Rise Welcome Heading & Tagline */}

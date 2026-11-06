@@ -21,6 +21,18 @@ export interface ScamlensPreferences {
    * Kept independent of motionMode.
    */
   themeMode: ThemePreference;
+  /**
+   * Whether to display high-priority in-app alert banners when a High/Very High risk scam is detected.
+   */
+  inAppRiskAlerts: boolean;
+  /**
+   * Whether to play an audible security alert ping upon detecting a confirmed scam or high-risk URL.
+   */
+  soundAlerts: boolean;
+  /**
+   * Whether to render compact UI cards for information-dense monitoring.
+   */
+  compactCards: boolean;
 }
 
 export const PREFS_STORAGE_KEY = "scamlens_ui_preferences_v1";
@@ -30,6 +42,9 @@ const DEFAULT_PREFERENCES: ScamlensPreferences = {
   motionMode: "full",
   honorSystemReducedMotion: true,
   themeMode: "dark",
+  inAppRiskAlerts: true,
+  soundAlerts: false,
+  compactCards: false,
 };
 
 export function readStoredPreferences(): ScamlensPreferences {
@@ -49,6 +64,9 @@ export function readStoredPreferences(): ScamlensPreferences {
           ? parsed.honorSystemReducedMotion
           : true,
       themeMode,
+      inAppRiskAlerts: typeof parsed.inAppRiskAlerts === "boolean" ? parsed.inAppRiskAlerts : true,
+      soundAlerts: typeof parsed.soundAlerts === "boolean" ? parsed.soundAlerts : false,
+      compactCards: typeof parsed.compactCards === "boolean" ? parsed.compactCards : false,
     };
   } catch {
     return DEFAULT_PREFERENCES;

@@ -18,6 +18,7 @@ import {
   ShieldCheck,
   Sparkles,
   Upload,
+  User,
   X,
 } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
@@ -27,6 +28,9 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { healthQueryOptions } from "@/lib/scamlens-queries";
 import { useScamlensPreferences } from "@/lib/scamlens-preferences";
 import { ThemeSwitcher } from "./primitives";
+import { ScamLensIcon, ScamLensLogo } from "./logo";
+import { ProfileMenu } from "./profile-menu";
+import { ProfileSettingsDialog } from "./profile-settings-dialog";
 
 const items = [
   { to: "/", label: "Dashboard", icon: Activity },
@@ -43,6 +47,7 @@ const items = [
 export function AppShell({ children }: { children: ReactNode }) {
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [mobileProfileOpen, setMobileProfileOpen] = useState(false);
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const { shouldReduceMotion, updatePreferences } = useScamlensPreferences();
@@ -81,21 +86,13 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   const renderNav = (scope: "desktop" | "mobile") => (
     <>
-      <div className="flex h-16 shrink-0 items-center border-b border-sidebar-border px-4 sm:h-18">
-        <motion.div
-          whileHover={shouldReduceMotion ? { scale: 1 } : { scale: 1.05, rotate: -3 }}
-          transition={{ duration: 0.18 }}
-          className="grid size-9 shrink-0 place-items-center rounded-lg bg-primary text-primary-foreground shadow-[0_0_18px_rgba(56,189,248,0.28)]"
-        >
-          <ShieldCheck className="size-5" />
-        </motion.div>
-        {(!collapsed || scope === "mobile") && (
-          <div className="ml-3 min-w-0 pr-8 lg:pr-0">
-            <p className="truncate text-sm font-bold text-sidebar-foreground">SCAMLENS AI</p>
-            <p className="truncate text-[10px] font-semibold tracking-wider text-muted-foreground">
-              SECURITY INTELLIGENCE
-            </p>
+      <div className="flex h-16 shrink-0 items-center border-b border-sidebar-border px-3 sm:h-18">
+        {collapsed && scope === "desktop" ? (
+          <div className="flex w-full justify-center">
+            <ScamLensIcon size={32} glow />
           </div>
+        ) : (
+          <ScamLensLogo size="sm" showTagline={true} />
         )}
       </div>
 
@@ -151,6 +148,19 @@ export function AppShell({ children }: { children: ReactNode }) {
 
       {scope === "mobile" && (
         <div className="space-y-2.5 border-t border-sidebar-border px-3 py-3">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              setMobileOpen(false);
+              setMobileProfileOpen(true);
+            }}
+            className="w-full min-h-10 justify-start gap-2 border-primary/30 bg-primary/5 text-xs font-semibold text-foreground hover:bg-primary/10"
+          >
+            <User className="size-4 text-primary" />
+            <span>My Profile &amp; Settings</span>
+          </Button>
+
           <div>
             <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
               Theme Appearance
@@ -267,6 +277,9 @@ export function AppShell({ children }: { children: ReactNode }) {
             >
               <Menu className="size-5" />
             </Button>
+            <div className="flex items-center gap-2 lg:hidden">
+              <ScamLensIcon size={26} glow={false} />
+            </div>
             <div className="min-w-0">
               <p className="truncate text-xs font-semibold text-foreground sm:text-sm">
                 Security Analysis Workspace
@@ -299,21 +312,8 @@ export function AppShell({ children }: { children: ReactNode }) {
               <span>{connected ? "ML analysis connected" : "Static analysis only"}</span>
             </div>
 
-            <div className="flex shrink-0 items-center gap-1.5 sm:gap-2">
-              <span className="hidden max-w-44 truncate text-xs text-muted-foreground 2xl:inline">
-                {user.data?.email}
-              </span>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={signOut}
-                aria-label="Sign out"
-                className="min-h-10 px-2.5 transition-transform active:scale-97 sm:min-h-9 sm:px-3"
-              >
-                <LogOut className="size-4" />
-                <span className="hidden sm:inline">Sign out</span>
-              </Button>
-            </div>
+            {/* Complete Profile Menu & Settings Dropdown */}
+            <ProfileMenu />
           </div>
         </header>
 
@@ -327,6 +327,11 @@ export function AppShell({ children }: { children: ReactNode }) {
           {children}
         </motion.main>
       </div>
+
+      <ProfileSettingsDialog
+        open={mobileProfileOpen}
+        onOpenChange={setMobileProfileOpen}
+      />
     </div>
   );
 }

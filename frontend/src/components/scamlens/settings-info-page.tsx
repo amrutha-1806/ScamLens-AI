@@ -11,6 +11,7 @@ import {
   Database,
   FileSearch,
   Info,
+  KeyRound,
   Layers,
   LockKeyhole,
   Monitor,
@@ -24,6 +25,7 @@ import {
   Sparkles,
   Sun,
   Trash2,
+  User,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ApiNotice, EmptyState, PageHeader, Panel } from "./primitives";
@@ -31,6 +33,7 @@ import { ScamlensApiError, scamlensApi } from "@/lib/scamlens-api";
 import { healthQueryOptions, historyQueryOptions, modelInfoQueryOptions } from "@/lib/scamlens-queries";
 import { useScamlensPreferences } from "@/lib/scamlens-preferences";
 import { cn } from "@/lib/utils";
+import { ProfileSettingsDialog, type ProfileTab } from "./profile-settings-dialog";
 
 export type SettingsInfoTab = "ai-models" | "about" | "settings";
 
@@ -140,6 +143,8 @@ const MAIN_MODULES = [
 export function SettingsInformationPage({ initialTab = "ai-models" }: { initialTab?: SettingsInfoTab }) {
   const [activeTab, setActiveTab] = useState<SettingsInfoTab>(initialTab);
   const [quizResetDone, setQuizResetDone] = useState(false);
+  const [profileDialogOpen, setProfileDialogOpen] = useState(false);
+  const [profileDialogTab, setProfileDialogTab] = useState<ProfileTab>("profile");
 
   useEffect(() => {
     setActiveTab(initialTab);
@@ -822,6 +827,48 @@ export function SettingsInformationPage({ initialTab = "ai-models" }: { initialT
             transition={{ duration: 0.22 }}
             className="space-y-7"
           >
+            {/* Account, Profile & Password Management Banner */}
+            <div className="rounded-xl border border-primary/30 bg-gradient-to-r from-primary/10 via-secondary/30 to-secondary/15 p-5 shadow-panel">
+              <div className="flex flex-wrap items-center justify-between gap-4">
+                <div className="flex items-center gap-3.5">
+                  <div className="grid size-11 place-items-center rounded-xl border border-primary/40 bg-primary/20 text-primary">
+                    <User className="size-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-bold text-foreground sm:text-base">
+                      Analyst Profile &amp; Authentication Credentials
+                    </h3>
+                    <p className="mt-0.5 text-xs text-muted-foreground">
+                      Manage your display name, update account password, and inspect active session security.
+                    </p>
+                  </div>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      setProfileDialogTab("profile");
+                      setProfileDialogOpen(true);
+                    }}
+                    className="min-h-9"
+                  >
+                    <User className="size-3.5" /> My Profile
+                  </Button>
+                  <Button
+                    size="sm"
+                    onClick={() => {
+                      setProfileDialogTab("password");
+                      setProfileDialogOpen(true);
+                    }}
+                    className="min-h-9"
+                  >
+                    <KeyRound className="size-3.5" /> Change Password
+                  </Button>
+                </div>
+              </div>
+            </div>
+
             <div className="grid gap-6 xl:grid-cols-2">
               {/* Functional Theme, Animation & Accessibility Preferences */}
               <Panel
@@ -1088,6 +1135,12 @@ export function SettingsInformationPage({ initialTab = "ai-models" }: { initialT
           </motion.div>
         )}
       </AnimatePresence>
+
+      <ProfileSettingsDialog
+        open={profileDialogOpen}
+        onOpenChange={setProfileDialogOpen}
+        defaultTab={profileDialogTab}
+      />
     </div>
   );
 }
