@@ -29,22 +29,22 @@ const emailSchema = z.object({
 });
 
 const resultSchema = z.object({
-  prediction: z.enum(["Legitimate", "Scam/Phishing"]),
-  risk_level: z.enum(["Low", "Suspicious", "High", "Very High"]),
+  prediction: z.string(),
+  risk_level: z.string(),
   // Backend sends risk_probability as a 0–1 fraction and risk_score as 0–100.
-  risk_probability: z.number().min(0).max(1),
-  risk_score: z.number().min(0).max(100),
-  indicators: z.array(z.string()),
-  guidance: z.string(),
-  model: z.string(),
-  scan_id: z.number().optional(),
+  risk_probability: z.number().optional().default(0),
+  risk_score: z.number().optional().default(0),
+  indicators: z.array(z.string()).optional().default([]),
+  guidance: z.string().optional().default(""),
+  model: z.string().optional().default("Random Forest"),
+  scan_id: z.union([z.number(), z.string()]).optional(),
   timestamp: z.string().optional(),
   explainability: z.any().optional(),
   language_info: z.any().optional(),
   url_intelligence: z.any().optional(),
   sender_analysis: z.any().optional(),
   subject_analysis: z.any().optional(),
-  embedded_urls: z.array(z.string()).optional(),
+  embedded_urls: z.array(z.any()).optional(),
 }).passthrough();
 
 // The backend persists records with a wider field set than the analyze endpoints
@@ -139,7 +139,8 @@ const modelInfoSchema = z.object({
 /**
  * Normalizes and sanitizes the configured API base URL.
  * Extracts the valid HTTP/HTTPS origin, safely discarding any inadvertent trailing text
- * (such as clipboard artifact "copy value" or extra whitespace/slashes), without hardcoding.
+ * (such as clipboard artifacts like "copy value", "%20copy%20value", extra whitespace, or trailing slashes),
+ * without hardcoding.
  */
 export function resolveApiBaseUrl(raw: string | undefined): string | undefined {
   if (!raw || typeof raw !== "string") return undefined;
@@ -147,33 +148,49 @@ export function resolveApiBaseUrl(raw: string | undefined): string | undefined {
   let cleaned = raw.trim();
   if (!cleaned) return undefined;
 
-  // 1. Decode any URI-encoded entities (e.g. "%20copy%20value")
-  try {
-    cleaned = decodeURIComponent(cleaned);
-  } catch {
-    // If malformed URI sequence, keep cleaned as-is
+  // 1. Decode URI encodings repeatedly (handles single "%20" and double "%2520" encodings)
+  for (let i = 0; i < 3; i++) {
+    try {
+      const decoded = decodeURIComponent(cleaned);
+      if (decoded === cleaned) break;
+      cleaned = decoded.trim();
+    } catch {
+      break;
+    }
   }
 
-  // 2. Discard any trailing text after whitespace (e.g. "https://domain.com copy value")
+  // 2. Normalize any remaining literal '%20' sequences to spaces
+  cleaned = cleaned.replace(/%20/gi, " ").trim();
+
+  // 3. Discard any trailing text after whitespace (e.g. "https://domain.com copy value")
   cleaned = cleaned.split(/\s+/)[0] || "";
 
-  // 3. Remove common accidental trailing clipboard text or suffixes if concatenated without spaces
-  cleaned = cleaned.replace(/(?:copy\s*value|copy)$/i, "").trim();
+  // 4. Remove common accidental clipboard text/suffixes even if concatenated without spaces
+  cleaned = cleaned.replace(/(?:copy[\s_.-]*value|copy)$/i, "").trim();
 
-  // 4. Strip trailing slashes
+  // 5. Strip trailing slashes
   cleaned = cleaned.replace(/\/+$/, "");
 
   if (!cleaned) return undefined;
 
+  // 6. Prepend https:// if protocol is missing
+  if (!/^https?:\/\//i.test(cleaned)) {
+    cleaned = `https://${cleaned}`;
+  }
+
+  // 7. Validate and extract clean origin + pathname using URL
   try {
     const url = new URL(cleaned);
     if (url.protocol !== "http:" && url.protocol !== "https:") return undefined;
-    return `${url.origin}${url.pathname === "/" ? "" : url.pathname}`.replace(/\/+$/, "");
+    const path = url.pathname === "/" ? "" : url.pathname.replace(/\/+$/, "");
+    return `${url.origin}${path}`;
   } catch {
-    if (/^[a-zA-Z0-9.-]+(:\d+)?$/.test(cleaned)) {
-      return `https://${cleaned}`;
+    // If URL parsing threw, strictly extract valid protocol + hostname + optional port
+    const match = cleaned.match(/^(https?:\/\/[a-zA-Z0-9.-]+(?::\d+)?)/i);
+    if (match) {
+      return match[1].replace(/\/+$/, "");
     }
-    return cleaned;
+    return undefined; // NEVER return an invalid or malformed URL string!
   }
 }
 
@@ -185,29 +202,88 @@ const rawApiBaseUrl: string | undefined = (
 
 const apiBaseUrl = resolveApiBaseUrl(rawApiBaseUrl);
 
+/**
+ * Dynamically resolves the normalized API base URL.
+ * Checks import.meta.env (client Vite), process.env (SSR / Nitro), and module fallback.
+ */
+export function getCleanBaseUrl(): string {
+  const raw: string | undefined = (
+    (typeof import.meta !== "undefined" && import.meta.env && (import.meta.env.VITE_API_BASE_URL ?? import.meta.env["VITE_API_BASE_URL"])) ||
+    (typeof process !== "undefined" && process.env && (process.env.VITE_API_BASE_URL ?? process.env.API_BASE_URL)) ||
+    rawApiBaseUrl
+  ) as string | undefined;
+
+  const clean = resolveApiBaseUrl(raw) ?? apiBaseUrl;
+  if (!clean) {
+    throw new ScamlensApiError("Backend unavailable");
+  }
+  return clean;
+}
+
+/**
+ * Builds a clean, fully-qualified API URL for the given endpoint path.
+ * Guarantees no duplicate slashes, no 'copy value', and valid URL format.
+ */
+export function buildApiUrl(path: string): string {
+  const base = getCleanBaseUrl();
+  const cleanPath = path.startsWith("/") ? path : `/${path}`;
+  const full = `${base}${cleanPath}`;
+  try {
+    const u = new URL(full);
+    return u.href;
+  } catch {
+    return full;
+  }
+}
+
 export class ScamlensApiError extends Error {
   constructor(message: string, public status?: number) { super(message); this.name = "ScamlensApiError"; }
 }
 
 function mapResult(value: z.infer<typeof resultSchema>): AnalysisResult {
-  // risk_probability is a 0–1 fraction from the backend; multiply by 100 for display only.
+  const rawProb = value.risk_probability ?? (value.risk_score ? value.risk_score / 100 : 0);
+  const fraction = rawProb > 1 ? rawProb / 100 : rawProb;
+  const rawPred = value.prediction ?? "";
+  const predLower = rawPred.toLowerCase();
+  const prediction: AnalysisResult["prediction"] =
+    predLower.includes("scam") || predLower.includes("phish") || predLower.includes("spam")
+      ? "Scam/Phishing"
+      : "Legitimate";
+  const rawLevel = value.risk_level ?? "Low";
+  const riskLevel: AnalysisResult["riskLevel"] =
+    rawLevel === "Very High" || rawLevel === "High" || rawLevel === "Suspicious" || rawLevel === "Low"
+      ? rawLevel
+      : fraction >= 0.75 ? "High" : fraction >= 0.4 ? "Suspicious" : "Low";
+
+  // Normalize embedded_urls to string array if elements are objects
+  const embeddedUrls = Array.isArray(value.embedded_urls)
+    ? value.embedded_urls.map((item: unknown) => {
+        if (typeof item === "string") return item;
+        if (item && typeof item === "object") {
+          const obj = item as Record<string, unknown>;
+          return String(obj.input ?? obj.normalized_url ?? obj.url ?? JSON.stringify(obj));
+        }
+        return String(item);
+      })
+    : undefined;
+
   return {
-    prediction: value.prediction,
-    riskLevel: value.risk_level,
-    riskProbability: value.risk_probability * 100,
-    riskScore: value.risk_score,
-    riskFraction: value.risk_probability,
-    indicators: value.indicators,
-    guidance: value.guidance,
-    model: value.model,
-    scanId: value.scan_id,
+    prediction,
+    riskLevel,
+    riskProbability: fraction * 100,
+    riskScore: value.risk_score ?? fraction * 100,
+    riskFraction: fraction,
+    indicators: value.indicators ?? [],
+    guidance: value.guidance ?? "",
+    model: value.model ?? "Random Forest",
+    scanId: typeof value.scan_id === "number" ? value.scan_id : value.scan_id ? Number(value.scan_id) : undefined,
     timestamp: value.timestamp,
     explainability: value.explainability,
     languageInfo: value.language_info,
     urlIntelligence: value.url_intelligence,
     senderAnalysis: value.sender_analysis,
     subjectAnalysis: value.subject_analysis,
-    embeddedUrls: value.embedded_urls,
+    embeddedUrls,
   };
 }
 
@@ -221,10 +297,10 @@ async function errorMessage(response: Response) {
 }
 
 async function request(path: string, init?: RequestInit): Promise<unknown> {
-  if (!apiBaseUrl) throw new ScamlensApiError("Backend unavailable");
+  const url = buildApiUrl(path);
   let response: Response;
   try {
-    response = await fetch(`${apiBaseUrl}${path}`, { ...init, headers: { Accept: "application/json", ...init?.headers } });
+    response = await fetch(url, { ...init, headers: { Accept: "application/json", ...init?.headers } });
   } catch { throw new ScamlensApiError("Backend unavailable"); }
   if (!response.ok) throw new ScamlensApiError(await errorMessage(response), response.status);
   try { return await response.json(); } catch { throw new ScamlensApiError("The backend returned an invalid response.", response.status); }
@@ -236,13 +312,28 @@ async function postJson(path: string, body: unknown) {
 
 function parseResult(data: unknown) {
   const parsed = resultSchema.safeParse(data);
-  if (!parsed.success) throw new ScamlensApiError("The backend response did not match the expected analysis format.");
+  if (!parsed.success) {
+    console.warn("[scamlens] /api/analyze validation error:", parsed.error.issues);
+    throw new ScamlensApiError("The backend response did not match the expected analysis format.");
+  }
   return mapResult(parsed.data);
 }
 
 export const scamlensApi = {
-  isConfigured: Boolean(apiBaseUrl),
-  baseUrl: apiBaseUrl,
+  get isConfigured(): boolean {
+    try {
+      return Boolean(getCleanBaseUrl());
+    } catch {
+      return false;
+    }
+  },
+  get baseUrl(): string | undefined {
+    try {
+      return getCleanBaseUrl();
+    } catch {
+      return undefined;
+    }
+  },
   analyzeMessage: async (input: MessageAnalysisRequest) => parseResult(await postJson("/api/analyze/message", messageSchema.parse(input))),
   analyzeUrl: async (input: UrlAnalysisRequest) => parseResult(await postJson("/api/analyze/url", urlSchema.parse(input))),
   analyzeEmail: async (input: EmailAnalysisRequest) => parseResult(await postJson("/api/analyze/email", emailSchema.parse(input))),
@@ -273,10 +364,10 @@ export const scamlensApi = {
     return raw as { success: boolean; scan_id: number; review_status: string };
   },
   downloadIncidentPdf: async (scanId: number | string): Promise<{ filename: string; size: number }> => {
-    if (!apiBaseUrl) throw new ScamlensApiError("Backend unavailable");
     let response: Response;
     try {
-      response = await fetch(`${apiBaseUrl}/api/reports/incident-pdf/${scanId}`, {
+      const url = buildApiUrl(`/api/reports/incident-pdf/${scanId}`);
+      response = await fetch(url, {
         method: "GET",
         headers: { Accept: "application/pdf" },
       });
@@ -344,7 +435,6 @@ export const scamlensApi = {
     };
   },
   downloadReportPdf: async (params: { scope: string; days: number; limit?: number }): Promise<{ filename: string; size: number }> => {
-    if (!apiBaseUrl) throw new ScamlensApiError("Backend unavailable");
     const query = new URLSearchParams({
       scope: params.scope,
       days: String(params.days),
@@ -352,7 +442,8 @@ export const scamlensApi = {
     });
     let response: Response;
     try {
-      response = await fetch(`${apiBaseUrl}/api/reports/pdf?${query.toString()}`, {
+      const url = buildApiUrl(`/api/reports/pdf?${query.toString()}`);
+      response = await fetch(url, {
         method: "GET",
         headers: { Accept: "application/pdf" },
       });
@@ -448,12 +539,17 @@ async function queryPermission(name: string): Promise<PermissionStateReport> {
 function isEmbedded(): boolean { try { return window.self !== window.top; } catch { return true; } }
 
 async function probe(path: string, method: "GET" | "POST", body: BodyInit | undefined, contentType: string | undefined, validate: (data: unknown) => boolean, lnaState: string | undefined): Promise<DiagnosticResult> {
-  if (!apiBaseUrl) return { path, method, status: "FAIL", category: "Network connection", detail: "VITE_API_BASE_URL is not configured." };
+  let url: string;
+  try {
+    url = buildApiUrl(path);
+  } catch {
+    return { path, method, status: "FAIL", category: "Network connection", detail: "VITE_API_BASE_URL is not configured." };
+  }
   const controller = new AbortController(); const timer = setTimeout(() => controller.abort(), DIAGNOSTIC_TIMEOUT_MS);
   const started = performance.now();
   try {
     const headers: Record<string, string> = { Accept: "application/json" }; if (contentType) headers["Content-Type"] = contentType;
-    const response = await fetch(`${apiBaseUrl}${path}`, { method, headers, body: body ?? null, signal: controller.signal, cache: "no-store" });
+    const response = await fetch(url, { method, headers, body: body ?? null, signal: controller.signal, cache: "no-store" });
     const durationMs = Math.round(performance.now() - started);
     if (!response.ok) return { path, method, status: "FAIL", httpStatus: response.status, durationMs, category: "Backend HTTP error", detail: await errorMessage(response) };
     let data: unknown; try { data = await response.json(); } catch { return { path, method, status: "FAIL", httpStatus: response.status, durationMs, category: "Malformed response", detail: "Response body was not valid JSON." }; }
