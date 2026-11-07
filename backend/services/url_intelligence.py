@@ -156,8 +156,11 @@ def _ip_host(host: str) -> Optional[str]:
     return None
 
 
-def _finding(code: str, severity: str, title: str, detail: str) -> Dict[str, str]:
-    return {"code": code, "severity": severity, "title": title, "detail": detail}
+def _finding(code: str, severity: str, title: str, detail: str, component: Optional[str] = None) -> Dict[str, Any]:
+    f: Dict[str, Any] = {"code": code, "severity": severity, "title": title, "detail": detail}
+    if component:
+        f["component"] = component
+    return f
 
 
 def _decode_punycode(host: str) -> Optional[str]:
@@ -491,6 +494,100 @@ def compute_structural_checks(
     return checks
 
 
+def compute_url_component_offsets(
+    url: str,
+    scheme_supplied: bool,
+    host: str,
+    reg_domain: str,
+    subdomain: Optional[str],
+    tld: Optional[str],
+    port: Optional[int],
+    path: str,
+    query: str,
+) -> Dict[str, Tuple[int, int]]:
+    """
+    Compute exact character offsets (start, end) for parsed URL components
+    relative to the submitted raw URL string.
+
+    Guarantees:
+    - 0 <= start < end <= len(url)
+    - url[start:end] strictly corresponds to the component representation.
+    """
+    offsets: Dict[str, Tuple[int, int]] = {}
+    if not url:
+        return offsets
+
+    # 1. Scheme
+    auth_start = 0
+    if scheme_supplied:
+        m_scheme = re.match(r"^([a-zA-Z][a-zA-Z0-9+.\-]*)://", url)
+        if m_scheme:
+            offsets["scheme"] = (0, m_scheme.end(1))
+            auth_start = m_scheme.end()
+
+    # 2. Userinfo check
+    userinfo_match = re.match(r"^(?:[^/@]+)@", url[auth_start:])
+    if userinfo_match:
+        host_start = auth_start + userinfo_match.end()
+    else:
+        host_start = auth_start
+
+    # 3. Host and host sub-components
+    if host:
+        h_idx = url.lower().find(host.lower(), host_start)
+        if h_idx != -1:
+            host_start = h_idx
+            host_end = host_start + len(host)
+            offsets["host"] = (host_start, host_end)
+
+            # Subdomain
+            if subdomain and host.lower().startswith(subdomain.lower() + "."):
+                offsets["subdomain"] = (host_start, host_start + len(subdomain))
+
+            # Registrable domain
+            if reg_domain and host.lower().endswith(reg_domain.lower()):
+                reg_start = host_end - len(reg_domain)
+                offsets["registrable_domain"] = (reg_start, host_end)
+
+                # TLD
+                if tld and reg_domain.lower().endswith("." + tld.lower()):
+                    offsets["tld"] = (host_end - len(tld), host_end)
+
+            after_host = host_end
+
+            # Port
+            if port is not None:
+                port_match = re.match(r"^:(\d+)", url[host_end:])
+                if port_match:
+                    offsets["port"] = (host_end + 1, host_end + port_match.end(1))
+                    after_host = host_end + port_match.end()
+
+            # Path
+            if path and path != "/" and url[after_host:].startswith(path):
+                offsets["path"] = (after_host, after_host + len(path))
+                after_path = after_host + len(path)
+            elif path == "/" and url[after_host:].startswith("/"):
+                offsets["path"] = (after_host, after_host + 1)
+                after_path = after_host + 1
+            else:
+                after_path = after_host
+
+            # Query
+            if query:
+                q_idx = url.find("?" + query, after_path)
+                if q_idx != -1:
+                    offsets["query"] = (q_idx + 1, q_idx + 1 + len(query))
+
+    # Strict validation: every offset must satisfy 0 <= start < end <= len(url)
+    validated: Dict[str, Tuple[int, int]] = {}
+    url_len = len(url)
+    for comp_name, (start, end) in offsets.items():
+        if 0 <= start < end <= url_len:
+            validated[comp_name] = (start, end)
+
+    return validated
+
+
 def analyze_url_static(raw_url: str) -> Dict[str, Any]:
     """
     Decompose a URL string and evaluate static lexical warning signs.
@@ -596,59 +693,59 @@ def analyze_url_static(raw_url: str) -> Dict[str, Any]:
     # ---------------- Findings (all static) ----------------
     if scheme == "http":
         findings.append(_finding("no_https", "medium", "Unencrypted HTTP scheme",
-                                 "The link uses http:// rather than https://, so traffic to it would not be encrypted. Many legitimate sites still use HTTPS for any login or payment page."))
+                                 "The link uses http:// rather than https://, so traffic to it would not be encrypted. Many legitimate sites still use HTTPS for any login or payment page.", component="scheme"))
     if not scheme_supplied:
         findings.append(_finding("no_scheme", "low", "No scheme supplied",
-                                 "No http:// or https:// prefix was provided; http:// was assumed for parsing only."))
+                                 "No http:// or https:// prefix was provided; http:// was assumed for parsing only.", component="scheme"))
     if is_ip:
         findings.append(_finding("ip_host", "high", "Raw IP address used as host",
-                                 f"The host is an IP address ({ip_value}) instead of a domain name. Legitimate organisations rarely ask users to visit raw IP addresses."))
+                                 f"The host is an IP address ({ip_value}) instead of a domain name. Legitimate organisations rarely ask users to visit raw IP addresses.", component="host"))
     if parts.username is not None or "@" in (parts.netloc or ""):
         findings.append(_finding("userinfo_at", "high", "'@' symbol in the address authority",
-                                 "Text before an '@' in the address is ignored by browsers, so a URL can appear to start with a trusted name while pointing elsewhere."))
+                                 "Text before an '@' in the address is ignored by browsers, so a URL can appear to start with a trusted name while pointing elsewhere.", component="host"))
     if decoded_idn or non_ascii_host:
         shown = decoded_idn or host
         findings.append(_finding("idn_homograph", "high", "Internationalised (punycode / non-ASCII) host",
-                                 f"The host contains non-ASCII characters ({shown}). Look-alike Unicode characters can imitate well-known brand names."))
+                                 f"The host contains non-ASCII characters ({shown}). Look-alike Unicode characters can imitate well-known brand names.", component="host"))
     reg_root = reg_domain.split(".")[0] if reg_domain else ""
     if not is_ip and any(reg_domain == s or reg_domain.endswith("." + s) for s in URL_SHORTENERS):
         findings.append(_finding("url_shortener", "medium", "URL shortening service",
-                                 f"'{reg_domain}' is a link shortener, which hides the real destination. The final destination cannot be known without visiting the link, which SCAMLENS never does."))
+                                 f"'{reg_domain}' is a link shortener, which hides the real destination. The final destination cannot be known without visiting the link, which SCAMLENS never does.", component="registrable_domain"))
     if tld and tld in SUSPICIOUS_TLDS:
         findings.append(_finding("suspicious_tld", "medium", f"Frequently abused top-level domain (.{tld})",
-                                 f"The .{tld} extension is commonly seen in phishing campaigns. Many legitimate sites also use it, so this is only an indicator."))
+                                 f"The .{tld} extension is commonly seen in phishing campaigns. Many legitimate sites also use it, so this is only an indicator.", component="tld"))
     if len(sub_labels) >= 3:
         findings.append(_finding("deep_subdomains", "medium", "Many subdomain levels",
-                                 f"The host has {len(sub_labels)} subdomain levels ({subdomain}). Deep nesting is sometimes used to push the real domain out of view."))
+                                 f"The host has {len(sub_labels)} subdomain levels ({subdomain}). Deep nesting is sometimes used to push the real domain out of view.", component="subdomain"))
     if not is_ip and host.count("-") >= 3:
         findings.append(_finding("many_hyphens", "low", "Many hyphens in host",
-                                 f"The host contains {host.count('-')} hyphens. Hyphen-heavy names (e.g. secure-login-verify-...) are common in look-alike domains."))
+                                 f"The host contains {host.count('-')} hyphens. Hyphen-heavy names (e.g. secure-login-verify-...) are common in look-alike domains.", component="host"))
     if not is_ip and reg_label and len(reg_label) >= 10 and host_entropy >= 3.6 and digits_in_host >= 2:
         findings.append(_finding("high_entropy", "medium", "Random-looking domain name",
-                                 f"The domain label '{reg_label}' has high character entropy ({host_entropy} bits/char) and contains digits, which can indicate an algorithmically generated domain."))
+                                 f"The domain label '{reg_label}' has high character entropy ({host_entropy} bits/char) and contains digits, which can indicate an algorithmically generated domain.", component="registrable_domain"))
     if len(url) > 100:
         findings.append(_finding("long_url", "low", "Unusually long URL",
                                  f"The URL is {len(url)} characters long. Very long URLs can hide the meaningful part of the address."))
     if port not in STANDARD_PORTS:
         findings.append(_finding("non_standard_port", "medium", f"Non-standard port ({port})",
-                                 "Web pages normally use ports 80 or 443. A custom port is unusual for consumer-facing services."))
+                                 "Web pages normally use ports 80 or 443. A custom port is unusual for consumer-facing services.", component="port"))
     if "//" in path:
         findings.append(_finding("path_double_slash", "low", "Double slash inside path",
-                                 "A '//' inside the path can be used to embed a second address or confuse readers."))
+                                 "A '//' inside the path can be used to embed a second address or confuse readers.", component="path"))
     path_kw = sorted({kw for kw in SUSPICIOUS_PATH_KEYWORDS if kw in decoded_path or kw in host})
     if path_kw:
         findings.append(_finding("credential_keywords", "medium" if len(path_kw) >= 2 else "low", "Sensitive-action keywords in URL",
-                                 "The URL text contains: " + ", ".join(path_kw) + ". These words are common in credential-harvesting links but also appear on genuine sites."))
+                                 "The URL text contains: " + ", ".join(path_kw) + ". These words are common in credential-harvesting links but also appear on genuine sites.", component="path"))
     redirect_params = [k for k, v in query_pairs if k.lower() in REDIRECT_PARAM_NAMES and re.match(r"^(https?:)?//", unquote(v).strip(), re.I)]
     if redirect_params:
         findings.append(_finding("embedded_redirect", "medium", "Embedded redirect parameter",
-                                 f"Query parameter(s) {', '.join(redirect_params)} contain another web address, a pattern used by open-redirect phishing."))
+                                 f"Query parameter(s) {', '.join(redirect_params)} contain another web address, a pattern used by open-redirect phishing.", component="query"))
     if any(decoded_path.endswith(ext) for ext in RISKY_FILE_EXTENSIONS):
         findings.append(_finding("risky_download", "high", "Link points to an executable or archive file",
-                                 "The path ends with a file type (e.g. .apk, .exe, .zip) that can install software. Never install files from unsolicited links."))
+                                 "The path ends with a file type (e.g. .apk, .exe, .zip) that can install software. Never install files from unsolicited links.", component="path"))
     if "%" in url and re.search(r"%[0-9a-fA-F]{2}", parts.netloc or ""):
         findings.append(_finding("encoded_host", "medium", "Percent-encoded characters in host",
-                                 "The host portion contains percent-encoding, which can disguise the real domain."))
+                                 "The host portion contains percent-encoding, which can disguise the real domain.", component="host"))
 
     # Brand impersonation / typosquatting.
     brand_match: Optional[Dict[str, Any]] = None
@@ -665,8 +762,9 @@ def analyze_url_static(raw_url: str) -> Dict[str, Any]:
                 in_host = brand in re.split(r"[.\-_]", host) or (len(brand) >= 5 and brand in host)
                 if in_host:
                     brand_match = {"brand": brand, "type": "impersonation", "official_domains": list(officials)}
+                    brand_comp = "subdomain" if (subdomain and brand in subdomain) else "registrable_domain"
                     findings.append(_finding("brand_impersonation", "high", f"Brand name '{brand}' used on an unrelated domain",
-                                             f"The host mentions '{brand}', but the registrable domain is '{reg_domain}', not an official domain ({', '.join(officials)}). This is a common impersonation pattern."))
+                                             f"The host mentions '{brand}', but the registrable domain is '{reg_domain}', not an official domain ({', '.join(officials)}). This is a common impersonation pattern.", component=brand_comp))
                     break
             if brand_match is None and reg_label and len(reg_label) >= 4:
                 host_segments = [s for s in re.split(r"[.\-_]", host) if len(s) >= 4]
@@ -683,7 +781,7 @@ def analyze_url_static(raw_url: str) -> Dict[str, Any]:
                             if 0 < dist <= (1 if len(official_label) <= 6 else 2):
                                 brand_match = {"brand": brand, "type": "typosquat", "edit_distance": dist, "official_domains": list(officials)}
                                 findings.append(_finding("typosquatting", "high", f"Possible typosquat of '{official}'",
-                                                         f"'{cand}' differs from the official name '{official_label}' by {dist} character edit(s). Look-alike spellings are a classic phishing technique."))
+                                                         f"'{cand}' differs from the official name '{official_label}' by {dist} character edit(s). Look-alike spellings are a classic phishing technique.", component="registrable_domain"))
                                 break
                         if brand_match:
                             break
@@ -702,6 +800,18 @@ def analyze_url_static(raw_url: str) -> Dict[str, Any]:
         level = "Low"
     else:
         level = "No notable indicators"
+
+    offsets = compute_url_component_offsets(
+        url=url,
+        scheme_supplied=scheme_supplied,
+        host=host,
+        reg_domain=reg_domain,
+        subdomain=subdomain,
+        tld=tld,
+        port=port,
+        path=parts.path,
+        query=parts.query,
+    )
 
     result.update(
         valid=True,
@@ -722,6 +832,7 @@ def analyze_url_static(raw_url: str) -> Dict[str, Any]:
             "fragment": parts.fragment or None,
             "is_ip_address": is_ip,
             "ip_address": ip_value,
+            "offsets": offsets,
         },
         metrics={
             "url_length": len(url),
@@ -753,6 +864,9 @@ def analyze_url_static(raw_url: str) -> Dict[str, Any]:
     if lexical:
         result["lexical_features"] = lexical
 
+    risk_verdict = calculate_url_risk_verdict(result)
+    result["risk_verdict"] = risk_verdict
+
     return result
 
 
@@ -777,3 +891,159 @@ def extract_urls(text: str, limit: int = 10) -> List[str]:
         if len(seen) >= limit:
             break
     return seen
+
+
+def calculate_url_risk_verdict(url_intel: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Derive the risk score, risk probability, risk level, and classification prediction
+    strictly from static URL heuristic analysis findings and severity.
+
+    Guarantees:
+    - risk_probability == round(risk_score / 100.0, 4) (strictly synchronized)
+    - risk_level is determined according to standard application risk thresholds.
+    - Zero dependency on SMS-trained text ML models.
+    - Official domain matches provide supporting evidence, but never suppress suspicious findings.
+    """
+    findings = url_intel.get("findings", [])
+    high_count = sum(1 for f in findings if f.get("severity") == "high")
+    score = url_intel.get("heuristic_score", 0)
+    heuristic_level = url_intel.get("heuristic_level", "No notable indicators")
+    brand_match = url_intel.get("brand_match")
+
+    # 1. Base Score Calculation from Static Heuristic Findings
+    if score == 0 or heuristic_level == "No notable indicators":
+        # Zero structural risk indicators found.
+        risk_score = 0.0
+        risk_level = "Low"
+        prediction = "Legitimate"
+    elif heuristic_level == "Low":
+        # Low severity indicators (score 1 to 3, high_count == 0)
+        # Low risk tier: [0.0, 24.99]
+        risk_score = round(min(24.0, score * 7.5), 1)
+        risk_level = "Low"
+        prediction = "Legitimate"
+    elif heuristic_level == "Elevated":
+        # Elevated severity: high_count == 1 OR score 4 to 6
+        if high_count >= 1:
+            # Contains at least one severe indicator (e.g. raw IP host or executable download)
+            # High risk tier: [50.0, 74.99]
+            risk_score = round(min(74.0, 50.0 + (score - 3) * 6.0), 1)
+            risk_level = "High"
+            prediction = "Scam/Phishing"
+        else:
+            # Multiple medium/low indicators without severe signals (e.g. HTTP + shortener + keywords)
+            # Suspicious risk tier: [25.0, 49.99]
+            risk_score = round(min(49.0, 25.0 + (score - 3) * 8.0), 1)
+            risk_level = "Suspicious"
+            prediction = "Legitimate"
+    else:  # "High"
+        # High severity: high_count >= 2 OR score >= 7
+        if high_count >= 2 or score >= 9:
+            # Severe compound phishing signals (Very High risk tier: [75.0, 100.0])
+            risk_score = round(min(96.0, 78.0 + (score - 8) * 3.0), 1)
+            risk_level = "Very High"
+            prediction = "Scam/Phishing"
+        else:
+            # High severity signals (e.g. score 7 or 8 with high_count == 1, such as deceptive brand + suspicious TLD)
+            # High risk tier: [50.0, 74.99]
+            risk_score = round(min(74.5, 70.0 + (score - 7) * 4.5), 1)
+            risk_level = "High"
+            prediction = "Scam/Phishing"
+
+    # Strictly synchronized probability
+    risk_probability = round(risk_score / 100.0, 4)
+
+    # 2. Explanatory Indicators
+    indicators: List[str] = []
+    for f in findings:
+        tag = f"[URL] {f['title']}"
+        indicators.append(tag)
+
+    if brand_match:
+        b_name = str(brand_match.get("brand", "")).upper()
+        b_type = brand_match.get("type")
+        if b_type == "official_domain":
+            indicators.append(f"[Verified Domain] Host matches official domain for {b_name} (supporting evidence).")
+        elif b_type in ("impersonation", "typosquat"):
+            brand_indicator = f"[Deceptive Brand] Host appears to imitate {b_name}."
+            if brand_indicator not in indicators:
+                indicators.insert(0, brand_indicator)
+
+    if not indicators:
+        indicators.append("No suspicious structural indicators detected in URL text.")
+
+    # 3. Plain-Language Safety Guidance (honest, no false guarantees of safety)
+    # Guidance must always agree with the static findings: "no suspicious indicators" wording is
+    # only used when the engine really found nothing. Scores and classifications are unaffected.
+    official_name = (
+        str(brand_match.get("brand", "")).upper()
+        if brand_match and brand_match.get("type") == "official_domain"
+        else None
+    )
+    if risk_level == "Low":
+        if findings:
+            titles = [str(f.get("title", "")).strip() for f in findings if f.get("title")]
+            shown = "; ".join(titles[:3]) + (f"; and {len(titles) - 3} more" if len(titles) > 3 else "")
+            has_notable = any(f.get("severity") in ("medium", "high") for f in findings)
+            if has_notable:
+                lead = (
+                    f"A suspicious indicator was detected in the URL: {shown}. "
+                    if len(findings) == 1
+                    else f"Suspicious indicators were detected in the URL: {shown}. "
+                )
+                lead += (
+                    "The overall static risk remains Low because only limited evidence was found, "
+                    "but review this link carefully before clicking it. "
+                )
+            else:
+                lead = (
+                    f"Minor URL indicator(s) noted: {shown}. The overall static risk is Low, "
+                    "but treat this link with normal caution. "
+                )
+            if official_name:
+                lead += (
+                    f"The host matches a recognized official domain for {official_name}, but an official "
+                    "domain match does not make the path or query content of the link safe. "
+                )
+            guidance = (
+                lead
+                + "Automated static analysis cannot inspect the destination page content; always ensure you are "
+                "on a genuine secure connection before entering credentials."
+            )
+        elif official_name:
+            guidance = (
+                f"The link points to a recognized official domain for {official_name} "
+                "with no suspicious structural indicators. Automated static analysis cannot inspect dynamic "
+                "destination page content; always ensure you are on a genuine secure connection before entering credentials."
+            )
+        else:
+            guidance = (
+                "No suspicious structural indicators detected in the URL text. While the link structure appears "
+                "standard, automated static analysis cannot inspect external website content or guarantee server safety. "
+                "Always exercise standard caution before sharing credentials or financial details."
+            )
+    elif risk_level == "Suspicious":
+        guidance = (
+            "Elevated risk signals detected in the URL structure. Avoid entering sensitive passwords, "
+            "financial information, or downloading files from this address without independent verification."
+        )
+    elif risk_level == "High":
+        guidance = (
+            "High-risk deceptive indicators detected in the URL structure. Do not visit this link or "
+            "provide passwords, OTPs, or financial information. Verify the address through an official channel."
+        )
+    else:  # Very High
+        guidance = (
+            "Critical phishing or malicious patterns detected in the URL structure. Do not click or open "
+            "this link under any circumstances. Never disclose personal data, credentials, or OTPs."
+        )
+
+    return {
+        "risk_score": risk_score,
+        "risk_probability": risk_probability,
+        "risk_level": risk_level,
+        "prediction": prediction,
+        "model": "Static URL Heuristic Engine",
+        "indicators": indicators,
+        "guidance": guidance,
+    }

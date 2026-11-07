@@ -24,6 +24,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { ApiNotice, Panel } from "./primitives";
 import { ExplainabilityCard, LanguageTransparencyCard } from "./explainable-ai";
+import { robotGuardian } from "./cyber-robot";
 import { scamlensApi, ScamlensApiError } from "@/lib/scamlens-api";
 import { useScamlensPreferences } from "@/lib/scamlens-preferences";
 import { useQueryClient } from "@tanstack/react-query";
@@ -64,19 +65,24 @@ export function EmailAnalyzerSection({
 
   async function handleScan() {
     if (!sender.trim() || sender.trim().length < 3) {
-      setError("Please provide a valid sender email address or header.");
+      const msg = "Please provide a valid sender email address or header.";
+      setError(msg);
       setStatus("error");
+      robotGuardian.notifyInvalid(msg, "email");
       return;
     }
     if (!body.trim() || body.trim().length < 3) {
-      setError("Please provide the email body text (minimum 3 characters).");
+      const msg = "Please provide the email body text (minimum 3 characters).";
+      setError(msg);
       setStatus("error");
+      robotGuardian.notifyInvalid(msg, "email");
       return;
     }
 
     setStatus("loading");
     setError("");
     setResult(null);
+    robotGuardian.notifyScanning("Inspecting email headers, body, and embedded links...", "email");
 
     try {
       const response = await scamlensApi.analyzeEmail({
@@ -86,6 +92,7 @@ export function EmailAnalyzerSection({
       });
       setResult(response);
       setStatus("success");
+      robotGuardian.notifyAnalysisResult(response, "Email", "email");
       onResultUpdated?.(response);
       void queryClient.invalidateQueries({ queryKey: ["scamlens", "history"] });
     } catch (err) {
@@ -93,6 +100,7 @@ export function EmailAnalyzerSection({
       setError(msg);
       setStatus("error");
       setResult(null);
+      robotGuardian.notifyInvalid(msg, "email");
       onResultUpdated?.(null);
     }
   }
@@ -104,6 +112,7 @@ export function EmailAnalyzerSection({
     setStatus("idle");
     setError("");
     setResult(null);
+    robotGuardian.resetToIdle();
     onResultUpdated?.(null);
   }
 
@@ -115,6 +124,7 @@ export function EmailAnalyzerSection({
     setStatus("idle");
     setError("");
     setResult(null);
+    robotGuardian.resetToIdle();
   }
 
   return (
@@ -208,6 +218,10 @@ export function EmailAnalyzerSection({
               <Trash2 className="size-4" /> Clear
             </Button>
           </div>
+
+          {status === "error" && error && (
+            <ApiNotice kind="error" message={error} />
+          )}
 
           {/* Sample quick-loads */}
           <div className="border-t border-border pt-4">

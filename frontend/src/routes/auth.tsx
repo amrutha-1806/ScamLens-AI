@@ -26,6 +26,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ThemeSwitcher } from "@/components/scamlens/primitives";
 import { ScamLensIcon } from "@/components/scamlens/logo";
+import { CyberRobot, robotGuardian, useRobotGuardian, type RobotMood } from "@/components/scamlens/cyber-robot";
 import { formatAuthError } from "@/lib/auth-error-helper";
 import { useScamlensPreferences } from "@/lib/scamlens-preferences";
 import { cn } from "@/lib/utils";
@@ -99,6 +100,8 @@ function AuthPage() {
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
   const [focusedField, setFocusedField] = useState<"email" | "password" | null>(null);
+  const [cursorPos, setCursorPos] = useState<{ x: number; y: number } | null>(null);
+  const [isInsideSignInArea, setIsInsideSignInArea] = useState(false);
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => {
@@ -132,6 +135,7 @@ function AuthPage() {
           password,
         });
         if (error) throw error;
+        robotGuardian.greet("Welcome back! Ready to inspect suspicious links and messages.");
         navigate({ to: "/", replace: true });
       } else if (mode === "signup") {
         const { data, error } = await supabase.auth.signUp({
@@ -141,6 +145,7 @@ function AuthPage() {
         });
         if (error) throw error;
         if (data.session) {
+          robotGuardian.greet("Welcome to SCAMLENS AI! Your security guardian is active.");
           navigate({ to: "/", replace: true });
         } else {
           setInfo(
@@ -167,6 +172,15 @@ function AuthPage() {
       setBusy(false);
     }
   }
+
+  const guardianState = useRobotGuardian();
+  const authRobotMood: RobotMood = busy
+    ? "scanning"
+    : error
+      ? "invalid"
+      : info
+        ? "greeting"
+        : guardianState.mood;
 
   const descriptionText =
     mode === "signin"
@@ -352,6 +366,14 @@ function AuthPage() {
         initial={shouldReduceMotion ? false : { opacity: 0, y: 12, scale: 0.985 }}
         animate={{ opacity: 1, y: 0, scale: 1 }}
         transition={{ duration: shouldReduceMotion ? 0 : 0.4, ease: "easeOut" }}
+        onMouseMove={(e) => {
+          setCursorPos({ x: e.clientX, y: e.clientY });
+          setIsInsideSignInArea(true);
+        }}
+        onMouseLeave={() => {
+          setCursorPos(null);
+          setIsInsideSignInArea(false);
+        }}
         className="relative z-10 w-full max-w-[424px]"
       >
         {/* Subtle Cyan Halo Glow Behind Smartphone Frame */}
@@ -429,24 +451,21 @@ function AuthPage() {
                   AI-POWERED PROTECTION
                 </motion.div>
 
-                {/* Official SCAMLENS AI Shield & Scanning Lens Brand Emblem */}
+                {/* AI Sentinel Robot Mascot (Entire head tracks cursor, eyes move independently, neck/body stable) */}
                 <motion.div
                   initial={shouldReduceMotion ? false : { opacity: 0, scale: 0.88 }}
                   animate={{ opacity: 1, scale: 1 }}
-                  whileHover={shouldReduceMotion ? { scale: 1 } : { scale: 1.05, y: -2 }}
                   transition={{ duration: shouldReduceMotion ? 0 : 0.35, ease: "easeOut" }}
-                  className="relative mt-2.5 flex justify-center"
+                  className="relative mt-2 flex justify-center"
                 >
-                  <motion.div
-                    animate={
-                      shouldReduceMotion
-                        ? { opacity: 0.45, scale: 1 }
-                        : { opacity: [0.35, 0.75, 0.35], scale: [0.95, 1.08, 0.95] }
-                    }
-                    transition={{ duration: 3.6, repeat: Infinity, ease: "easeInOut" }}
-                    className="pointer-events-none absolute -inset-3 rounded-full bg-cyan-400/25 blur-lg"
+                  <CyberRobot
+                    size={110}
+                    mood={authRobotMood}
+                    cursorPos={cursorPos}
+                    isInsideSignInArea={isInsideSignInArea}
+                    isPasswordFocused={focusedField === "password"}
+                    showPassword={show}
                   />
-                  <ScamLensIcon size={56} glow={true} />
                 </motion.div>
 
                 {/* Staggered Fade-and-Rise Welcome Heading & Tagline */}

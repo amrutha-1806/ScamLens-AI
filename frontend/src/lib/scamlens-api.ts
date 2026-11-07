@@ -37,14 +37,14 @@ const resultSchema = z.object({
   indicators: z.array(z.string()).optional().default([]),
   guidance: z.string().optional().default(""),
   model: z.string().optional().default("Random Forest"),
-  scan_id: z.union([z.number(), z.string()]).optional(),
-  timestamp: z.string().optional(),
+  scan_id: z.union([z.number(), z.string()]).nullish(),
+  timestamp: z.string().nullish(),
   explainability: z.any().optional(),
   language_info: z.any().optional(),
   url_intelligence: z.any().optional(),
   sender_analysis: z.any().optional(),
   subject_analysis: z.any().optional(),
-  embedded_urls: z.array(z.any()).optional(),
+  embedded_urls: z.array(z.any()).nullish(),
 }).passthrough();
 
 // The backend persists records with a wider field set than the analyze endpoints
@@ -292,7 +292,7 @@ function mapResult(value: z.infer<typeof resultSchema>): AnalysisResult {
     guidance: value.guidance ?? "",
     model: value.model ?? "Random Forest",
     scanId: typeof value.scan_id === "number" ? value.scan_id : value.scan_id ? Number(value.scan_id) : undefined,
-    timestamp: value.timestamp,
+    timestamp: value.timestamp ?? undefined,
     explainability: value.explainability,
     languageInfo: value.language_info,
     urlIntelligence: value.url_intelligence,

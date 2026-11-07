@@ -31,6 +31,7 @@ import { ThemeSwitcher } from "./primitives";
 import { ScamLensIcon, ScamLensLogo } from "./logo";
 import { ProfileMenu } from "./profile-menu";
 import { ProfileSettingsDialog } from "./profile-settings-dialog";
+import { RobotGuardianCompanion, robotGuardian } from "./cyber-robot";
 
 const items = [
   { to: "/", label: "Dashboard", icon: Activity },
@@ -60,6 +61,13 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   async function signOut() {
     setMobileOpen(false);
+    try {
+      sessionStorage.removeItem("scamlens_session_greeted");
+      sessionStorage.removeItem("scamlens_just_signed_in");
+    } catch {
+      // Ignore storage errors
+    }
+    robotGuardian.resetToIdle();
     await queryClient.cancelQueries();
     queryClient.clear();
     await supabase.auth.signOut();
@@ -70,9 +78,25 @@ export function AppShell({ children }: { children: ReactNode }) {
   const health = useQuery(healthQueryOptions());
   const connected = health.isSuccess && health.data.healthy;
 
-  // Close mobile drawer on route change or Escape key
+  // Greet the user with a friendly wave once per signed-in session
+  useEffect(() => {
+    if (!user.data) return;
+    try {
+      if (sessionStorage.getItem("scamlens_session_greeted") !== "1") {
+        sessionStorage.setItem("scamlens_session_greeted", "1");
+        robotGuardian.greet("Welcome back! Ready to inspect suspicious links and messages.");
+      }
+    } catch {
+      // Ignore storage errors
+    }
+  }, [user.data]);
+
+  // Close mobile drawer on route change or Escape key, and reset non-greeting mood
   useEffect(() => {
     setMobileOpen(false);
+    if (robotGuardian.getState().mood !== "greeting") {
+      robotGuardian.resetToIdle();
+    }
   }, [path]);
 
   useEffect(() => {
@@ -327,6 +351,8 @@ export function AppShell({ children }: { children: ReactNode }) {
           {children}
         </motion.main>
       </div>
+
+      <RobotGuardianCompanion />
 
       <ProfileSettingsDialog
         open={mobileProfileOpen}

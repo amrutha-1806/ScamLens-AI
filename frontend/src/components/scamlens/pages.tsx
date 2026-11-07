@@ -5,11 +5,12 @@ export { SettingsInformationPage, type SettingsInfoTab } from "./settings-info-p
 export { SecurityAlertCenterView } from "./alert-center";
 export { EmailAnalyzerSection } from "./email-analyzer";
 export { ExplainabilityCard, LanguageTransparencyCard } from "./explainable-ai";
-export { UrlIntelligenceCard } from "./url-intelligence";
+export { UrlIntelligenceCard, UrlAnatomyInspector } from "./url-intelligence";
 import { ExplainabilityCard, LanguageTransparencyCard } from "./explainable-ai";
-import { UrlIntelligenceCard } from "./url-intelligence";
+import { UrlIntelligenceCard, UrlAnatomyInspector } from "./url-intelligence";
 import { EmailAnalyzerSection } from "./email-analyzer";
 import { SecurityAlertCenterView } from "./alert-center";
+import { robotGuardian } from "./cyber-robot";
 import { Fragment, useMemo, useRef, useState, type ChangeEvent, type DragEvent } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
@@ -644,21 +645,27 @@ export function MessageAnalyzerPage() {
 
   async function analyze() {
     if (message.trim().length < 3) {
-      setError("Enter at least 3 characters to analyze.");
+      const msg = "Enter at least 3 characters to analyze.";
+      setError(msg);
       setStatus("error");
       setResult(null);
+      robotGuardian.notifyInvalid(msg, "message");
       return;
     }
     setStatus("loading");
     setResult(null);
+    robotGuardian.notifyScanning("Scanning message with Random Forest classifier...", "message");
     try {
       const response = await scamlensApi.analyzeMessage({ message });
       setResult(response);
       setStatus("success");
+      robotGuardian.notifyAnalysisResult(response, "Message", "message");
       void queryClient.invalidateQueries({ queryKey: ["scamlens", "history"] });
     } catch (err) {
-      setError(apiError(err));
+      const msg = apiError(err);
+      setError(msg);
       setStatus("error");
+      robotGuardian.notifyInvalid(msg, "message");
     }
   }
 
@@ -678,6 +685,7 @@ export function MessageAnalyzerPage() {
             setMode("message");
             setResult(null);
             setStatus("idle");
+            robotGuardian.resetToIdle();
           }}
           className={cn(
             "flex items-center gap-2 rounded-lg border px-4 py-2 text-xs font-semibold transition-all sm:text-sm",
@@ -696,6 +704,7 @@ export function MessageAnalyzerPage() {
             setMode("email");
             setResult(null);
             setStatus("idle");
+            robotGuardian.resetToIdle();
           }}
           className={cn(
             "flex items-center gap-2 rounded-lg border px-4 py-2 text-xs font-semibold transition-all sm:text-sm",
@@ -771,6 +780,7 @@ export function MessageAnalyzerPage() {
                 setStatus("idle");
                 setError("");
                 setResult(null);
+                robotGuardian.resetToIdle();
               }}
             >
               <Trash2 className="size-4" /> Clear Input
@@ -1157,8 +1167,8 @@ function getTopUrlReasons(result: AnalysisResult): { icon: "alert" | "check"; ti
       } else {
         reasons.push({
           icon: "alert",
-          title: "Statistical pattern",
-          explanation: "The machine learning classifier identified statistical patterns similar to known deceptive links.",
+          title: "Structural pattern",
+          explanation: "Static heuristic analysis identified risk patterns in the URL structure.",
         });
       }
     }
@@ -1183,11 +1193,19 @@ function getTopUrlReasons(result: AnalysisResult): { icon: "alert" | "check"; ti
       explanation: "The link uses a registered website address, not a raw numerical IP address.",
     });
   }
-  observations.push({
-    icon: "check",
-    title: "No suspicious keywords",
-    explanation: "No fake login, banking, or credential-harvesting words were detected.",
-  });
+  if (intel?.brand_match?.type === "official_domain") {
+    observations.push({
+      icon: "check",
+      title: "Official domain match",
+      explanation: `Host matches the recognized official domain for ${intel.brand_match.brand.toUpperCase()} (supporting evidence).`,
+    });
+  } else {
+    observations.push({
+      icon: "check",
+      title: "No suspicious keywords",
+      explanation: "No fake login, banking, or credential-harvesting words were detected.",
+    });
+  }
   return observations.slice(0, 3);
 }
 
@@ -1206,29 +1224,37 @@ export function UrlAnalyzerPage() {
     try {
       const parsed = new URL(trimmed);
       if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-        setError("URL must start with http:// or https://.");
+        const msg = "URL must start with http:// or https://.";
+        setError(msg);
         setStatus("error");
         setResult(null);
+        robotGuardian.notifyInvalid(msg, "url");
         return;
       }
     } catch {
-      setError("Enter a complete, valid URL including http:// or https://.");
+      const msg = "Enter a complete, valid URL including http:// or https://.";
+      setError(msg);
       setStatus("error");
       setResult(null);
+      robotGuardian.notifyInvalid(msg, "url");
       return;
     }
     setStatus("loading");
     setResult(null);
     setShowChecks(false);
     setShowTechnical(false);
+    robotGuardian.notifyScanning("Inspecting URL structure & static heuristics...", "url");
     try {
       const response = await scamlensApi.analyzeUrl({ url: trimmed });
       setResult(response);
       setStatus("success");
+      robotGuardian.notifyAnalysisResult(response, "URL", "url");
       void queryClient.invalidateQueries({ queryKey: ["scamlens", "history"] });
     } catch (err) {
-      setError(apiError(err));
+      const msg = apiError(err);
+      setError(msg);
       setStatus("error");
+      robotGuardian.notifyInvalid(msg, "url");
     }
   }
 
@@ -1283,6 +1309,7 @@ export function UrlAnalyzerPage() {
                 setStatus("idle");
                 setError("");
                 setResult(null);
+                robotGuardian.resetToIdle();
               }}
             >
               <Trash2 className="size-4" /> Clear
@@ -1432,6 +1459,11 @@ export function UrlAnalyzerPage() {
               <p className="mt-2 text-sm leading-6 text-foreground font-medium">{result.guidance}</p>
             </div>
 
+            {/* 2.5 URL Anatomy Inspector (Phase 2A Interactive Breakdown) */}
+            {result.urlIntelligence && (
+              <UrlAnatomyInspector intelligence={result.urlIntelligence} />
+            )}
+
             {/* 3. Three or fewer important reasons explaining the suspicious URL */}
             <div className="rounded-xl border border-border bg-card p-4 shadow-panel sm:p-5">
               <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-foreground">
@@ -1556,7 +1588,7 @@ export function UrlAnalyzerPage() {
               >
                 <div className="flex items-center gap-2.5">
                   <Cpu className="size-4 text-primary" />
-                  <span className="text-sm">Technical Details &amp; Machine Learning Info</span>
+                  <span className="text-sm">Technical Details &amp; Heuristic Engine Info</span>
                 </div>
                 <div className="flex items-center gap-2 text-xs text-muted-foreground">
                   <span>{showTechnical ? "Hide Details" : "Show Details"}</span>
@@ -1579,7 +1611,7 @@ export function UrlAnalyzerPage() {
                   {/* Model & Audit Meta */}
                   <div className="grid grid-cols-2 gap-2.5 text-xs sm:grid-cols-4">
                     <div className="rounded-lg border border-border bg-card p-3">
-                      <span className="text-[10px] text-muted-foreground">Classifier Model</span>
+                      <span className="text-[10px] text-muted-foreground">Analysis Engine</span>
                       <p className="mt-1 font-semibold text-foreground truncate">{result.model}</p>
                     </div>
                     <div className="rounded-lg border border-border bg-card p-3">
@@ -1604,7 +1636,7 @@ export function UrlAnalyzerPage() {
             <div className="space-y-4">
               <ApiNotice
                 kind="loading"
-                message="Inspecting URL lexical structure and querying the Python Random Forest service..."
+                message="Inspecting URL lexical structure and evaluating static security heuristics..."
               />
               <div className="relative overflow-hidden rounded-lg border border-primary/30 bg-primary/5 p-5 dark:border-cyan-500/30 dark:bg-slate-950/80">
                 <div className="flex items-center gap-3 text-xs font-medium text-primary dark:text-cyan-300">
@@ -1692,25 +1724,33 @@ export function BatchScannerPage() {
   function processSelectedFile(selected: File | undefined) {
     if (!selected) return;
     if (!selected.name.toLowerCase().endsWith(".csv")) {
-      setError("Invalid file type. Please upload a .csv file.");
+      const msg = "Invalid file type. Please upload a .csv file.";
+      setError(msg);
       setFile(null);
+      robotGuardian.notifyInvalid(msg, "batch");
       return;
     }
     if (selected.size === 0) {
-      setError("The selected CSV file is empty (0 bytes).");
+      const msg = "The selected CSV file is empty (0 bytes).";
+      setError(msg);
       setFile(null);
+      robotGuardian.notifyInvalid(msg, "batch");
       return;
     }
     if (selected.size > 5 * 1024 * 1024) {
-      setError("The CSV file exceeds the 5 MB maximum size limit.");
+      const msg = "The CSV file exceeds the 5 MB maximum size limit.";
+      setError(msg);
       setFile(null);
+      robotGuardian.notifyInvalid(msg, "batch");
       return;
     }
 
     const reader = new FileReader();
     reader.onerror = () => {
-      setError("Could not read the selected file. Verify file permissions and UTF-8 encoding.");
+      const msg = "Could not read the selected file. Verify file permissions and UTF-8 encoding.";
+      setError(msg);
       setFile(null);
+      robotGuardian.notifyInvalid(msg, "batch");
     };
     reader.onload = () => {
       const rawText = String(reader.result ?? "").replace(/^\uFEFF/, "");
@@ -1719,15 +1759,19 @@ export function BatchScannerPage() {
         .map((l) => l.trim())
         .filter((l) => l.length > 0);
       if (lines.length < 2) {
-        setError("The CSV file must contain a header row and at least one data row.");
+        const msg = "The CSV file must contain a header row and at least one data row.";
+        setError(msg);
         setFile(null);
+        robotGuardian.notifyInvalid(msg, "batch");
         return;
       }
       const parsed = lines.map(parseCsvRow);
       const headerRow = parsed[0]?.map((h, idx) => h || `Column_${idx + 1}`) ?? [];
       if (headerRow.length === 0 || headerRow.every((h) => !h.trim())) {
-        setError("The CSV header row is empty or malformed.");
+        const msg = "The CSV header row is empty or malformed.";
+        setError(msg);
         setFile(null);
+        robotGuardian.notifyInvalid(msg, "batch");
         return;
       }
 
@@ -1753,6 +1797,7 @@ export function BatchScannerPage() {
         count: parsed.length - 1,
         raw: selected,
       });
+      robotGuardian.resetToIdle(`Loaded ${selected.name} (${parsed.length - 1} rows). Ready for batch scan.`);
     };
     reader.readAsText(selected, "utf-8");
   }
@@ -1774,6 +1819,7 @@ export function BatchScannerPage() {
     setError("");
     setStatus("idle");
     setBatchMeta(null);
+    robotGuardian.resetToIdle();
     if (inputRef.current) inputRef.current.value = "";
   }
 
@@ -1791,18 +1837,25 @@ export function BatchScannerPage() {
   }
 
   async function scan() {
-    if (!file) return;
+    if (!file) {
+      robotGuardian.notifyInvalid("Please select a valid CSV file before scanning.", "batch");
+      return;
+    }
     setStatus("loading");
     setError("");
     setBatchMeta(null);
+    robotGuardian.notifyScanning(`Scanning ${file.count} CSV row(s) in "${selectedColumn}"...`, "batch");
     try {
       const response = await scamlensApi.analyzeBatch(file.raw, selectedColumn);
       setBatchMeta(response);
       setStatus("success");
+      robotGuardian.notifyBatchResult(response);
       void queryClient.invalidateQueries({ queryKey: ["scamlens", "history"] });
     } catch (err) {
-      setError(apiError(err));
+      const msg = apiError(err);
+      setError(msg);
       setStatus("error");
+      robotGuardian.notifyInvalid(msg, "batch");
     }
   }
 

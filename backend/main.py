@@ -13,7 +13,9 @@ from __future__ import annotations
 import sys
 import csv
 import io
+import re
 import inspect
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional
 
@@ -42,8 +44,12 @@ from backend.schemas import (
     UrlRequest,
 )
 from backend.services.ml_service import analyze
-from backend.services.url_intelligence import analyze_url_static
+from backend.services.url_intelligence import analyze_url_static, calculate_url_risk_verdict
 from backend.services.email_service import analyze_email_phishing
+from src.utils.database import log_scan_result
+from src.utils.logger import get_logger
+
+logger = get_logger("API")
 from backend.services.history_service import (
     get_history,
     get_alerts,
@@ -142,8 +148,9 @@ def analyze_message(request: MessageRequest):
 @app.post("/api/analyze/url", response_model=AnalysisResponse, tags=["Analysis"])
 def analyze_url(request: UrlRequest):
     """
-    Analyze a URL string for scam/phishing risk using static structural heuristics
-    and the trained ML model.
+    Analyze a URL string for scam/phishing risk using static structural heuristics.
+    Derives risk score, probability, risk level, and prediction purely from static
+    URL intelligence, bypassing the SMS-trained Random Forest model.
 
     SECURITY: The submitted URL is treated strictly as plain text.
     It is NEVER fetched, opened, resolved, crawled, or visited.
@@ -154,23 +161,41 @@ def analyze_url(request: UrlRequest):
         if not url_intel.get("valid", True):
             raise HTTPException(status_code=422, detail=url_intel.get("error", "Malformed URL"))
 
-        # 2. ML Inference on URL text
-        ml_result = analyze(request.url, user_id=request.user_id, include_explainability=False)
+        # 2. Derive Verdict from Static URL Intelligence (Decoupled from SMS Random Forest)
+        verdict = calculate_url_risk_verdict(url_intel)
 
-        # 3. Integrate static URL intelligence
-        ml_result["url_intelligence"] = url_intel
+        # 3. Database Logging (Safe SQLite recording)
+        scan_id = None
+        try:
+            preview = request.url[:80] + ("..." if len(request.url) > 80 else "")
+            scan_id = log_scan_result(
+                input_type="url",
+                content=preview,
+                prediction_label=verdict["prediction"],
+                scam_probability=verdict["risk_probability"],
+                risk_score=verdict["risk_score"],
+                risk_level=verdict["risk_level"],
+                explanation_summary="; ".join(verdict["indicators"][:3]),
+                user_id=request.user_id,
+            )
+        except Exception as e:
+            logger.warning(f"Database logging failed for URL: {e}")
 
-        # Merge URL findings into indicators list
-        for f in url_intel.get("findings", []):
-            finding_tag = f"[URL] {f['title']}"
-            if finding_tag not in ml_result["indicators"]:
-                ml_result["indicators"].insert(0, finding_tag)
-
-        # If static heuristics detect high risk (e.g. raw IP host or typosquatting), adjust score
-        if url_intel.get("heuristic_level") == "High" and ml_result["risk_score"] < 75.0:
-            ml_result["risk_score"] = max(ml_result["risk_score"], 80.0)
-            ml_result["risk_level"] = "High"
-            ml_result["prediction"] = "Scam/Phishing"
+        response_data = {
+            "prediction": verdict["prediction"],
+            "risk_level": verdict["risk_level"],
+            "risk_score": verdict["risk_score"],
+            "risk_probability": verdict["risk_probability"],
+            "indicators": verdict["indicators"],
+            "guidance": verdict["guidance"],
+            "model": verdict["model"],
+            "scan_id": scan_id,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "url_intelligence": url_intel,
+            "explainability": None,
+            "language_info": None,
+            "embedded_urls": None,
+        }
 
     except HTTPException:
         raise
@@ -179,7 +204,7 @@ def analyze_url(request: UrlRequest):
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"URL inspection error: {exc}")
 
-    return AnalysisResponse(**ml_result)
+    return AnalysisResponse(**response_data)
 
 
 # ---------------------------------------------------------------------------
@@ -265,6 +290,8 @@ async def analyze_batch(
             or lower_map.get("content")
             or lower_map.get("sms")
             or lower_map.get("email")
+            or lower_map.get("url")
+            or lower_map.get("link")
             or fieldnames[0]
         )
 
@@ -278,25 +305,79 @@ async def analyze_batch(
             errors.append(f"Row {idx + 1}: empty value in column '{text_col}' — skipped.")
             continue
         try:
-            r = analyze(input_text, include_explainability=False)
+            # Determine if this row represents a URL or a text message
+            explicit_type = str(row.get("type") or row.get("input_type") or row.get("channel") or "").strip().lower()
+            if explicit_type in ("url", "link"):
+                is_url = True
+            elif explicit_type in ("message", "text", "sms", "email"):
+                is_url = False
+            elif text_col.lower().strip() in ("url", "link"):
+                is_url = True
+            else:
+                is_url = (
+                    input_text.lower().startswith(("http://", "https://"))
+                    or bool(re.match(r"^www\.[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}", input_text.lower()))
+                )
+
             preview = input_text[:120] + ("…" if len(input_text) > 120 else "")
-            input_type = "url" if input_text.lower().startswith(("http://", "https://")) else "message"
-            results.append(BatchResultItem(
-                id=str(r.get("scan_id") or (idx + 1)),
-                timestamp=str(r.get("timestamp", "")),
-                row_index=idx,
-                input_type=input_type,
-                input_text=preview,
-                input_preview=preview,
-                prediction=r["prediction"],
-                risk_level=r["risk_level"],
-                risk_score=r["risk_score"],
-                risk_probability=r["risk_probability"],
-                indicators=r["indicators"],
-                guidance=r.get("guidance", ""),
-                model=r.get("model", "Random Forest"),
-                scan_id=r.get("scan_id"),
-            ))
+            row_user_id = str(row.get("user_id") or "").strip() or None
+
+            if is_url:
+                url_intel = analyze_url_static(input_text)
+                if not url_intel.get("valid", True):
+                    errors.append(f"Row {idx + 1}: invalid URL format — {url_intel.get('error', 'Malformed URL')}")
+                    continue
+                verdict = calculate_url_risk_verdict(url_intel)
+
+                scan_id = None
+                try:
+                    scan_id = log_scan_result(
+                        input_type="url",
+                        content=preview,
+                        prediction_label=verdict["prediction"],
+                        scam_probability=verdict["risk_probability"],
+                        risk_score=verdict["risk_score"],
+                        risk_level=verdict["risk_level"],
+                        explanation_summary="; ".join(verdict["indicators"][:3]),
+                        user_id=row_user_id,
+                    )
+                except Exception as e:
+                    logger.warning(f"Database logging failed for batch URL row: {e}")
+
+                results.append(BatchResultItem(
+                    id=str(scan_id or (idx + 1)),
+                    timestamp=datetime.now(timezone.utc).isoformat(),
+                    row_index=idx,
+                    input_type="url",
+                    input_text=preview,
+                    input_preview=preview,
+                    prediction=verdict["prediction"],
+                    risk_level=verdict["risk_level"],
+                    risk_score=verdict["risk_score"],
+                    risk_probability=verdict["risk_probability"],
+                    indicators=verdict["indicators"],
+                    guidance=verdict.get("guidance", ""),
+                    model=verdict.get("model", "Static URL Heuristic Engine"),
+                    scan_id=scan_id,
+                ))
+            else:
+                r = analyze(input_text, user_id=row_user_id, include_explainability=False)
+                results.append(BatchResultItem(
+                    id=str(r.get("scan_id") or (idx + 1)),
+                    timestamp=str(r.get("timestamp", "")),
+                    row_index=idx,
+                    input_type="message",
+                    input_text=preview,
+                    input_preview=preview,
+                    prediction=r["prediction"],
+                    risk_level=r["risk_level"],
+                    risk_score=r["risk_score"],
+                    risk_probability=r["risk_probability"],
+                    indicators=r["indicators"],
+                    guidance=r.get("guidance", ""),
+                    model=r.get("model", "Random Forest"),
+                    scan_id=r.get("scan_id"),
+                ))
         except Exception as exc:
             errors.append(f"Row {idx + 1}: prediction failed — {exc}")
 

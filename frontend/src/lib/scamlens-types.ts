@@ -65,6 +65,7 @@ export interface UrlFinding {
   severity: "low" | "medium" | "high";
   title: string;
   detail: string;
+  component?: string | undefined;
 }
 
 export interface UrlComponents {
@@ -83,6 +84,7 @@ export interface UrlComponents {
   fragment?: string | null;
   is_ip_address: boolean;
   ip_address?: string | null;
+  offsets?: Record<string, [number, number]> | null;
 }
 
 export interface UrlMetrics {
@@ -114,6 +116,8 @@ export interface StructuralCheckResult {
 
 export interface UrlIntelligenceData {
   valid: boolean;
+  /** Submitted URL text (trimmed); `components.offsets` are character indexes into this string. */
+  input?: string;
   normalized_url: string;
   components: UrlComponents;
   metrics: UrlMetrics;
