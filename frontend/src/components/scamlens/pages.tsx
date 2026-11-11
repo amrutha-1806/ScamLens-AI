@@ -11,6 +11,11 @@ import { UrlIntelligenceCard, UrlAnatomyInspector } from "./url-intelligence";
 import { EmailAnalyzerSection } from "./email-analyzer";
 import { SecurityAlertCenterView } from "./alert-center";
 import { robotGuardian } from "./cyber-robot";
+import { ExplainableRiskScoreCard } from "./explainable-risk-score";
+import { LanguageSelectorBar, SafetyGuidanceAndReportingCard } from "./regional-language-support";
+import { ScreenshotOcrUploader } from "./screenshot-ocr-uploader";
+import { AdvancedLinkCheckerCard } from "./advanced-link-checker";
+import { QrUpiSafetyChecker } from "./qr-upi-checker";
 import { Fragment, useMemo, useRef, useState, type ChangeEvent, type DragEvent } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
@@ -64,10 +69,11 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { ApiNotice, ChartEmpty, EmptyState, KpiCard, PageHeader, Panel } from "./primitives";
+import { GlobalThreatMap } from "./global-threat-map";
 import { ScamlensApiError, scamlensApi } from "@/lib/scamlens-api";
 import { useScamlensPreferences } from "@/lib/scamlens-preferences";
 import { healthQueryOptions, historyQueryOptions, modelInfoQueryOptions } from "@/lib/scamlens-queries";
-import type { AnalysisResult, BatchAnalysisResponse, ScanRecord, StructuralCheckResult } from "@/lib/scamlens-types";
+import type { AnalysisResult, BatchAnalysisResponse, ScanRecord, StructuralCheckResult, SupportedLanguage } from "@/lib/scamlens-types";
 import { cn } from "@/lib/utils";
 
 const messageExamples = {
@@ -79,7 +85,7 @@ const messageExamples = {
 
 const urlExamples = {
   "Safe HTTPS Documentation URL": "https://docs.python.org/3/library/urllib.parse.html",
-  "Suspicious Login Lure (HTTP)": "http://secure-login-account-verify-update.example/signin/confirm?user=admin",
+  "Lookalike Substitution (paypa1 / 1→l)": "http://paypa1-account-verify.example/signin/confirm",
   "IP-Based Banking Phishing URL": "http://192.168.10.45/netbanking/kyc-verification/login.php",
   "Shortened URL Example": "https://bit.ly/3xYz99ClaimReward",
 } as const;
@@ -139,7 +145,15 @@ function csvCell(value: string | number | undefined) {
   return `"${text.replaceAll('"', '""')}"`;
 }
 
-function AnalysisResultView({ result }: { result: AnalysisResult }) {
+function AnalysisResultView({
+  result,
+  analyzedText,
+  selectedLanguage = "en",
+}: {
+  result: AnalysisResult;
+  analyzedText?: string | undefined;
+  selectedLanguage?: SupportedLanguage | undefined;
+}) {
   const { shouldReduceMotion } = useScamlensPreferences();
   const isScam = result.prediction === "Scam/Phishing";
   const pct = Math.min(100, Math.max(0, result.riskProbability));
@@ -303,6 +317,23 @@ function AnalysisResultView({ result }: { result: AnalysisResult }) {
           </p>
           <p className="mt-1.5 text-xs leading-5 text-muted-foreground">{result.guidance}</p>
         </motion.div>
+      </div>
+
+      {/* 0. Feature 2: Explainable 0–100 Risk Score, Phrase Highlighter & Model vs Rule Breakdown */}
+      <div className="pt-2">
+        <ExplainableRiskScoreCard
+          result={result}
+          analyzedText={analyzedText}
+          selectedLanguage={selectedLanguage}
+        />
+      </div>
+
+      {/* 0.5 Feature 4 & 6: "What should I do next?" Safety Guidance & Official Cybercrime Reporting */}
+      <div className="pt-2">
+        <SafetyGuidanceAndReportingCard
+          result={result}
+          selectedLanguage={selectedLanguage}
+        />
       </div>
 
       {/* 1. Explainable AI Token Attributions */}
@@ -498,6 +529,9 @@ export function DashboardPage() {
         </Panel>
       </div>
 
+      {/* Global Scam Threat Map */}
+      <GlobalThreatMap records={records} />
+
       {/* Recent Activity & Quick Actions */}
       <div className="grid gap-6 xl:grid-cols-[1.45fr_1fr]">
         <Panel
@@ -650,15 +684,17 @@ export function DashboardPage() {
 // ============================================================================
 export function MessageAnalyzerPage() {
   const { shouldReduceMotion } = useScamlensPreferences();
-  const [mode, setMode] = useState<"message" | "email">("message");
+  const [mode, setMode] = useState<"message" | "ocr" | "email">("message");
+  const [selectedLanguage, setSelectedLanguage] = useState<SupportedLanguage>("en");
   const [message, setMessage] = useState("");
   const [status, setStatus] = useState<RequestStatus>("idle");
   const [error, setError] = useState("");
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const queryClient = useQueryClient();
 
-  async function analyze() {
-    if (message.trim().length < 3) {
+  async function analyzeText(overrideText?: string) {
+    const targetText = (overrideText ?? message).trim();
+    if (targetText.length < 3) {
       const msg = "Enter at least 3 characters to analyze.";
       setError(msg);
       setStatus("error");
@@ -666,11 +702,14 @@ export function MessageAnalyzerPage() {
       robotGuardian.notifyInvalid(msg, "message");
       return;
     }
+    if (overrideText !== undefined) {
+      setMessage(targetText);
+    }
     setStatus("loading");
     setResult(null);
     robotGuardian.notifyScanning("Scanning message with Random Forest classifier...", "message");
     try {
-      const response = await scamlensApi.analyzeMessage({ message });
+      const response = await scamlensApi.analyzeMessage({ message: targetText });
       setResult(response);
       setStatus("success");
       robotGuardian.notifyAnalysisResult(response, "Message", "message");
@@ -681,6 +720,10 @@ export function MessageAnalyzerPage() {
       setStatus("error");
       robotGuardian.notifyInvalid(msg, "message");
     }
+  }
+
+  async function analyze() {
+    await analyzeText();
   }
 
   return (
@@ -695,6 +738,7 @@ export function MessageAnalyzerPage() {
       <div className="flex flex-wrap items-center gap-2">
         <button
           type="button"
+          data-testid="mode-tab-sms"
           onClick={() => {
             setMode("message");
             setResult(null);
@@ -714,6 +758,25 @@ export function MessageAnalyzerPage() {
 
         <button
           type="button"
+          data-testid="mode-tab-screenshot-ocr"
+          onClick={() => {
+            setMode("ocr");
+          }}
+          className={cn(
+            "flex items-center gap-2 rounded-lg border px-4 py-2 text-xs font-semibold transition-all sm:text-sm",
+            mode === "ocr"
+              ? "border-primary bg-primary text-primary-foreground shadow-sm"
+              : "border-border bg-card text-muted-foreground hover:bg-secondary hover:text-foreground"
+          )}
+        >
+          <Upload className="size-4" />
+          <span>Screenshot Upload (OCR)</span>
+          <span className="rounded bg-primary-foreground/20 px-1.5 py-0.5 text-[10px] font-bold">New</span>
+        </button>
+
+        <button
+          type="button"
+          data-testid="mode-tab-email"
           onClick={() => {
             setMode("email");
             setResult(null);
@@ -732,6 +795,31 @@ export function MessageAnalyzerPage() {
           <span className="rounded bg-primary-foreground/20 px-1.5 py-0.5 text-[10px] font-bold">New</span>
         </button>
       </div>
+
+      {/* Feature 6: Regional Language Support Selector (English, Hindi, Hinglish, Kannada) */}
+      {mode !== "email" && (
+        <LanguageSelectorBar
+          selectedLanguage={selectedLanguage}
+          onSelectLanguage={setSelectedLanguage}
+          onLoadSample={(sampleText, lang) => {
+            setSelectedLanguage(lang);
+            setMessage(sampleText);
+            setStatus("idle");
+            setError("");
+            setResult(null);
+          }}
+        />
+      )}
+
+      {/* Feature 1: Screenshot Upload with Local Browser OCR */}
+      {mode === "ocr" && (
+        <ScreenshotOcrUploader
+          analyzing={status === "loading"}
+          onAnalyzeExtractedText={(extractedText) => {
+            void analyzeText(extractedText);
+          }}
+        />
+      )}
 
       {mode === "email" ? (
         <EmailAnalyzerSection onResultUpdated={setResult} />
@@ -852,7 +940,11 @@ export function MessageAnalyzerPage() {
                 exit={shouldReduceMotion ? { opacity: 1 } : { opacity: 0, y: -6 }}
                 transition={{ duration: shouldReduceMotion ? 0 : 0.24 }}
               >
-                <AnalysisResultView result={result} />
+                <AnalysisResultView
+                  result={result}
+                  analyzedText={message}
+                  selectedLanguage={selectedLanguage}
+                />
               </motion.div>
             ) : status === "loading" ? (
               <motion.div
@@ -1225,6 +1317,7 @@ function getTopUrlReasons(result: AnalysisResult): { icon: "alert" | "check"; ti
 
 export function UrlAnalyzerPage() {
   const { shouldReduceMotion } = useScamlensPreferences();
+  const [urlPageTab, setUrlPageTab] = useState<"url" | "upi">("url");
   const [url, setUrl] = useState("");
   const [status, setStatus] = useState<RequestStatus>("idle");
   const [error, setError] = useState("");
@@ -1281,11 +1374,49 @@ export function UrlAnalyzerPage() {
   return (
     <div className="space-y-7">
       <PageHeader
-        eyebrow="Zero-Execution Lexical Inspection"
-        title="URL Safety Analysis"
-        description="Evaluate suspicious web links for phishing patterns, domain obfuscation, and structural anomalies without ever visiting or executing the target address."
+        eyebrow="Zero-Execution Lexical & Payment Inspection"
+        title="URL, Link & UPI QR Safety Analysis"
+        description="Evaluate suspicious web links, shortened URLs, lookalike domains, and UPI QR payment payloads before clicking or paying."
       />
 
+      {/* Mode Switcher: URL & Link Checker vs QR Code & UPI Safety Checker */}
+      <div className="flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          data-testid="url-tab-link-checker"
+          onClick={() => setUrlPageTab("url")}
+          className={cn(
+            "flex items-center gap-2 rounded-lg border px-4 py-2 text-xs font-semibold transition-all sm:text-sm",
+            urlPageTab === "url"
+              ? "border-primary bg-primary text-primary-foreground shadow-sm"
+              : "border-border bg-card text-muted-foreground hover:bg-secondary hover:text-foreground"
+          )}
+        >
+          <Link2 className="size-4" />
+          <span>Advanced Link &amp; URL Checker</span>
+        </button>
+
+        <button
+          type="button"
+          data-testid="url-tab-qr-upi-checker"
+          onClick={() => setUrlPageTab("upi")}
+          className={cn(
+            "flex items-center gap-2 rounded-lg border px-4 py-2 text-xs font-semibold transition-all sm:text-sm",
+            urlPageTab === "upi"
+              ? "border-primary bg-primary text-primary-foreground shadow-sm"
+              : "border-border bg-card text-muted-foreground hover:bg-secondary hover:text-foreground"
+          )}
+        >
+          <Radar className="size-4" />
+          <span>QR Code &amp; UPI Safety Checker</span>
+          <span className="rounded bg-primary-foreground/20 px-1.5 py-0.5 text-[10px] font-bold">New</span>
+        </button>
+      </div>
+
+      {urlPageTab === "upi" ? (
+        <QrUpiSafetyChecker />
+      ) : (
+        <>
       <Panel
         title="Suspicious URL Input"
         description="Paste a complete URL starting with http:// or https://. The string is analyzed statically as text."
@@ -1477,6 +1608,12 @@ export function UrlAnalyzerPage() {
             {result.urlIntelligence && (
               <UrlAnatomyInspector intelligence={result.urlIntelligence} />
             )}
+
+            {/* Feature 3: Advanced Link Checker — Shortener, Lookalike Substitution & SSRF-Safe Redirect Resolution */}
+            <AdvancedLinkCheckerCard analyzedUrl={url} result={result} />
+
+            {/* Feature 4: "What should I do next?" Safety Guidance & Official Reporting */}
+            <SafetyGuidanceAndReportingCard result={result} />
 
             {/* 3. Three or fewer important reasons explaining the suspicious URL */}
             <div className="rounded-xl border border-border bg-card p-4 shadow-panel sm:p-5">
@@ -1681,6 +1818,8 @@ export function UrlAnalyzerPage() {
           </Panel>
         )}
       </AnimatePresence>
+      </>
+      )}
     </div>
   );
 }

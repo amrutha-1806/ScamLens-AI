@@ -68,7 +68,8 @@ def _build_guidance(risk_level: str) -> str:
 def analyze(
     text: str,
     user_id: Optional[str] = None,
-    include_explainability: bool = True
+    include_explainability: bool = True,
+    skip_logging: bool = False,
 ) -> Dict[str, Any]:
     """
     Run the existing ScamLensPredictor on arbitrary text with Explainable AI,
@@ -78,7 +79,7 @@ def analyze(
     URLs are analyzed purely as static strings.
     """
     predictor = _get_predictor()
-    result = predictor.predict(text, user_id=user_id)
+    result = predictor.predict(text, user_id=user_id, skip_logging=skip_logging)
 
     if not result.get("valid", True):
         raise ValueError(result.get("error", "Invalid input"))
@@ -111,12 +112,61 @@ def analyze(
     except Exception as exc:
         logger.warning(f"URL extraction failed: {exc}")
 
+    # 4. Combine supplementary Rule-Based & Regional Scam Signals transparently
+    indicators = list(result.get("indicators", []))
+    rule_highlights = (explainability_data or {}).get("rule_highlights", [])
+    regional_signals_obj = (language_data or {}).get("regional_signals", {})
+    regional_hits = (
+        list(regional_signals_obj.get("hinglish_signals", []))
+        + list(regional_signals_obj.get("kanglish_signals", []))
+    )
+
+    seen_ind = set(indicators)
+    for rh in rule_highlights:
+        cat_label = rh.get("category_label", "Suspicious Phrase")
+        matched = rh.get("text", "")
+        ind_str = f"[Rule Warning] {cat_label}: '{matched}'"
+        if ind_str not in seen_ind:
+            seen_ind.add(ind_str)
+            indicators.append(ind_str)
+
+    for reg_hit in regional_hits:
+        desc = reg_hit.get("description", "Regional scam phrase")
+        matched = reg_hit.get("matched_text", "")
+        ind_str = f"[Regional Rule] {desc} ('{matched}')"
+        if ind_str not in seen_ind:
+            seen_ind.add(ind_str)
+            indicators.append(ind_str)
+
+    # Compute composite 0-100 risk score (preserving raw Random Forest probability in explainability)
+    composite_score = float(result["risk_score"])
+    distinct_rule_categories = {rh.get("category") for rh in rule_highlights if rh.get("category")}
+    total_regional = len(regional_hits)
+
+    if len(distinct_rule_categories) >= 2 or total_regional >= 2:
+        rule_boost_floor = min(92.0, 55.0 + 12.0 * len(distinct_rule_categories) + 12.0 * total_regional)
+        composite_score = max(composite_score, round(rule_boost_floor, 2))
+    elif len(distinct_rule_categories) == 1 or total_regional == 1:
+        composite_score = max(composite_score, 45.0)
+
+    prediction = result["prediction"]
+    if composite_score >= 80.0:
+        risk_level = "Very High"
+        prediction = "Scam/Phishing"
+    elif composite_score >= 60.0:
+        risk_level = "High"
+        prediction = "Scam/Phishing"
+    elif composite_score >= 40.0:
+        risk_level = "Suspicious"
+        if len(distinct_rule_categories) >= 2 or total_regional >= 2:
+            prediction = "Scam/Phishing"
+
     return {
-        "prediction":        result["prediction"],
+        "prediction":        prediction,
         "risk_level":        risk_level,
-        "risk_score":        result["risk_score"],
-        "risk_probability":  scam_prob,
-        "indicators":        result.get("indicators", []),
+        "risk_score":        composite_score,
+        "risk_probability":  round(max(scam_prob, composite_score / 100.0), 4),
+        "indicators":        indicators,
         "guidance":          _build_guidance(risk_level),
         "model":             "Random Forest",
         "scan_id":           result.get("scan_id"),

@@ -55,6 +55,8 @@ export interface LanguageData {
   regional_signals: {
     hinglish_signals: RegionalSignal[];
     kanglish_signals: RegionalSignal[];
+    hindi_native_signals?: RegionalSignal[];
+    kannada_native_signals?: RegionalSignal[];
     total_regional_signals: number;
   };
   transparency_notes: string[];
@@ -166,12 +168,85 @@ export interface AnalysisResult {
 
 export interface MessageAnalysisRequest {
   message: string;
-  user_id?: string;
+  user_id?: string | undefined;
+  sandbox_demo?: boolean | undefined;
 }
 
 export interface UrlAnalysisRequest {
   url: string;
-  user_id?: string;
+  user_id?: string | undefined;
+  sandbox_demo?: boolean | undefined;
+}
+
+export type SupportedLanguage = "en" | "hi" | "hinglish" | "kn";
+
+export interface AdvancedUrlWarning {
+  code: string;
+  severity: "low" | "medium" | "high";
+  title: string;
+  plain_explanation: string;
+  matched_brand?: string;
+  official_domains?: string[];
+  substitution_hint?: string | null;
+}
+
+export interface RedirectHop {
+  hop: number;
+  url: string;
+  status_code?: number;
+  resolved_ip?: string;
+  location?: string | null;
+}
+
+export interface AdvancedUrlResolutionResult {
+  original_url: string;
+  normalized_url: string;
+  final_resolved_url?: string | null;
+  destination_verified: boolean;
+  is_shortened: boolean;
+  redirect_hops: RedirectHop[];
+  redirect_count: number;
+  resolution_status: string;
+  resolution_note: string;
+  advanced_warnings: AdvancedUrlWarning[];
+  safety_disclaimer: string;
+}
+
+export interface UpiWarning {
+  code: string;
+  severity: "low" | "medium" | "high";
+  title: string;
+  explanation: string;
+}
+
+export interface ExtractedUpiDetails {
+  raw_payload: string;
+  payload_type: string;
+  upi_id: string | null;
+  payee_name: string | null;
+  amount: string | null;
+  currency: string | null;
+  note: string | null;
+  merchant_code: string | null;
+  transaction_ref: string | null;
+  psp_handle: string | null;
+  psp_provider: string | null;
+  is_mandate: boolean;
+  mode: string | null;
+}
+
+export interface UpiInspectionResult {
+  valid: boolean;
+  error?: string;
+  source_type: string;
+  extracted_details: ExtractedUpiDetails | null;
+  prediction: Prediction;
+  risk_level: RiskLevel;
+  risk_score: number;
+  warnings: UpiWarning[];
+  indicators: string[];
+  guidance: string;
+  safety_disclaimers: string[];
 }
 
 export interface EmailAnalysisRequest {

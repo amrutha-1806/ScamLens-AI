@@ -14,11 +14,23 @@ from pydantic import BaseModel, Field
 class MessageRequest(BaseModel):
     message: str = Field(..., min_length=1, max_length=10000, description="Text message to analyze")
     user_id: Optional[str] = Field(None, description="Optional authenticated user ID for scan isolation")
+    sandbox_demo: Optional[bool] = Field(False, description="If True, skips SQLite logging (used by Try a Sample Scam)")
 
 
 class UrlRequest(BaseModel):
     url: str = Field(..., min_length=1, max_length=2048, description="URL string to analyze (never fetched)")
     user_id: Optional[str] = Field(None, description="Optional authenticated user ID for scan isolation")
+    sandbox_demo: Optional[bool] = Field(False, description="If True, skips SQLite logging (used by Try a Sample Scam)")
+
+
+class UrlResolveRequest(BaseModel):
+    url: str = Field(..., min_length=1, max_length=2048, description="URL string to inspect and safely resolve redirects with SSRF protection")
+    resolve_redirects: bool = Field(True, description="Whether to perform SSRF-protected redirect resolution")
+
+
+class UpiInspectRequest(BaseModel):
+    payload: str = Field(..., min_length=1, max_length=2048, description="UPI ID (username@handle) or decoded QR payload (upi://pay?...)")
+    source_type: str = Field("manual", description="Input source: 'manual' or 'qr'")
 
 
 class EmailAnalysisRequest(BaseModel):

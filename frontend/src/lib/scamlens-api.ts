@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type {
+  AdvancedUrlResolutionResult,
   AlertReviewRequest,
   AlertReviewStatus,
   AlertsResponse,
@@ -10,16 +11,19 @@ import type {
   MessageAnalysisRequest,
   ModelInfo,
   ScanRecord,
+  UpiInspectionResult,
   UrlAnalysisRequest,
 } from "./scamlens-types";
 
 const messageSchema = z.object({
   message: z.string().trim().min(3).max(10000),
   user_id: z.string().optional(),
+  sandbox_demo: z.boolean().optional(),
 });
 const urlSchema = z.object({
   url: z.string().trim().max(2048),
   user_id: z.string().optional(),
+  sandbox_demo: z.boolean().optional(),
 });
 const emailSchema = z.object({
   sender: z.string().trim().min(3).max(500),
@@ -356,6 +360,14 @@ export const scamlensApi = {
   analyzeMessage: async (input: MessageAnalysisRequest) => parseResult(await postJson("/api/analyze/message", messageSchema.parse(input))),
   analyzeUrl: async (input: UrlAnalysisRequest) => parseResult(await postJson("/api/analyze/url", urlSchema.parse(input))),
   analyzeEmail: async (input: EmailAnalysisRequest) => parseResult(await postJson("/api/analyze/email", emailSchema.parse(input))),
+  resolveUrlAdvanced: async (url: string, resolveRedirects: boolean = true): Promise<AdvancedUrlResolutionResult> => {
+    const raw = await postJson("/api/analyze/url/resolve", { url: url.trim(), resolve_redirects: resolveRedirects });
+    return raw as AdvancedUrlResolutionResult;
+  },
+  inspectUpi: async (payload: string, sourceType: string = "manual"): Promise<UpiInspectionResult> => {
+    const raw = await postJson("/api/analyze/upi", { payload: payload.trim(), source_type: sourceType });
+    return raw as UpiInspectionResult;
+  },
   getAlerts: async (status: string = "all", limit: number = 50): Promise<AlertsResponse> => {
     const query = new URLSearchParams({ status, limit: String(limit) });
     const raw = await request(`/api/alerts?${query.toString()}`);

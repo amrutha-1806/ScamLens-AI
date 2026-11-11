@@ -117,7 +117,7 @@ class ScamLensPredictor:
 
         return indicators
 
-    def predict(self, message: str, user_id: Optional[str] = None) -> Dict[str, Any]:
+    def predict(self, message: str, user_id: Optional[str] = None, skip_logging: bool = False) -> Dict[str, Any]:
         """
         Predict whether a text message is Legitimate or Scam/Phishing.
         """
@@ -158,22 +158,23 @@ class ScamLensPredictor:
         # Message Preview
         preview = raw_text[:80] + ("..." if len(raw_text) > 80 else "")
 
-        # 6. Database Logging (Safe SQLite recording)
+        # 6. Database Logging (Safe SQLite recording; skipped for educational sandbox demos)
         scan_id = None
-        try:
-            input_type = "url" if raw_text.startswith(("http://", "https://")) else "text"
-            scan_id = log_scan_result(
-                input_type=input_type,
-                content=preview,
-                prediction_label=pred_label,
-                scam_probability=round(scam_prob, 4),
-                risk_score=risk_score,
-                risk_level=risk_level,
-                explanation_summary="; ".join(indicators[:3]),
-                user_id=user_id
-            )
-        except Exception as e:
-            logger.warning(f"Database logging failed: {e}")
+        if not skip_logging:
+            try:
+                input_type = "url" if raw_text.startswith(("http://", "https://")) else "text"
+                scan_id = log_scan_result(
+                    input_type=input_type,
+                    content=preview,
+                    prediction_label=pred_label,
+                    scam_probability=round(scam_prob, 4),
+                    risk_score=risk_score,
+                    risk_level=risk_level,
+                    explanation_summary="; ".join(indicators[:3]),
+                    user_id=user_id
+                )
+            except Exception as e:
+                logger.warning(f"Database logging failed: {e}")
 
         return {
             "valid": True,

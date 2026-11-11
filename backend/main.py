@@ -42,10 +42,14 @@ from backend.schemas import (
     ModelInfoResponse,
     ScanRecord,
     UrlRequest,
+    UrlResolveRequest,
+    UpiInspectRequest,
 )
 from contextlib import asynccontextmanager
 from backend.services.ml_service import analyze, _get_predictor
 from backend.services.url_intelligence import analyze_url_static, calculate_url_risk_verdict
+from backend.services.url_resolver import inspect_url_advanced
+from backend.services.upi_service import inspect_upi_or_qr_payload
 from backend.services.email_service import analyze_email_phishing
 from src.utils.database import log_scan_result, init_db
 from src.utils.logger import get_logger
@@ -146,9 +150,15 @@ def analyze_message(request: MessageRequest):
     """
     Classify a text message as Legitimate or Scam/Phishing.
     Includes token-level Explainable AI attributions and multilingual script checks.
+    When sandbox_demo=True, skips SQLite scan history logging.
     """
     try:
-        result = analyze(request.message, user_id=request.user_id, include_explainability=True)
+        result = analyze(
+            request.message,
+            user_id=request.user_id,
+            include_explainability=True,
+            skip_logging=bool(request.sandbox_demo),
+        )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
     except Exception as exc:
@@ -178,22 +188,23 @@ def analyze_url(request: UrlRequest):
         # 2. Derive Verdict from Static URL Intelligence (Decoupled from SMS Random Forest)
         verdict = calculate_url_risk_verdict(url_intel)
 
-        # 3. Database Logging (Safe SQLite recording)
+        # 3. Database Logging (Safe SQLite recording; skipped for sandbox demo runs)
         scan_id = None
-        try:
-            preview = request.url[:80] + ("..." if len(request.url) > 80 else "")
-            scan_id = log_scan_result(
-                input_type="url",
-                content=preview,
-                prediction_label=verdict["prediction"],
-                scam_probability=verdict["risk_probability"],
-                risk_score=verdict["risk_score"],
-                risk_level=verdict["risk_level"],
-                explanation_summary="; ".join(verdict["indicators"][:3]),
-                user_id=request.user_id,
-            )
-        except Exception as e:
-            logger.warning(f"Database logging failed for URL: {e}")
+        if not bool(request.sandbox_demo):
+            try:
+                preview = request.url[:80] + ("..." if len(request.url) > 80 else "")
+                scan_id = log_scan_result(
+                    input_type="url",
+                    content=preview,
+                    prediction_label=verdict["prediction"],
+                    scam_probability=verdict["risk_probability"],
+                    risk_score=verdict["risk_score"],
+                    risk_level=verdict["risk_level"],
+                    explanation_summary="; ".join(verdict["indicators"][:3]),
+                    user_id=request.user_id,
+                )
+            except Exception as e:
+                logger.warning(f"Database logging failed for URL: {e}")
 
         response_data = {
             "prediction": verdict["prediction"],
@@ -219,6 +230,48 @@ def analyze_url(request: UrlRequest):
         raise HTTPException(status_code=500, detail=f"URL inspection error: {exc}")
 
     return AnalysisResponse(**response_data)
+
+
+# ---------------------------------------------------------------------------
+# Analyze — Advanced URL Redirect Resolution & Homograph Inspection (SSRF-Safe)
+# ---------------------------------------------------------------------------
+@app.post("/api/analyze/url/resolve", tags=["Analysis"])
+def resolve_url_advanced(request: UrlResolveRequest):
+    """
+    Safely inspect a URL for lookalike character substitutions, punycode/IDN homographs,
+    shorteners, and (when enabled) trace HTTP/HTTPS redirects with strict SSRF and
+    DNS-rebinding protection (no body content downloaded, max 5 hops, 2.5s timeout).
+    Never claims a URL is safe just because no warning was detected.
+    """
+    try:
+        return inspect_url_advanced(request.url, resolve_redirects=request.resolve_redirects)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Advanced URL inspection error: {exc}")
+
+
+# ---------------------------------------------------------------------------
+# Analyze — QR Code & UPI Payment Safety Checker
+# ---------------------------------------------------------------------------
+@app.post("/api/analyze/upi", tags=["Analysis"])
+def analyze_upi_payload(request: UpiInspectRequest):
+    """
+    Inspect a UPI ID (username@handle) or decoded QR payment URI (upi://pay?...)
+    for deceptive lures, handle typos, pre-filled debit amounts, and auto-debit mandates.
+    Never initiates payments, never claims recipient verification, and does not log personal payment strings.
+    """
+    try:
+        result = inspect_upi_or_qr_payload(request.payload, source_type=request.source_type)
+        if not result.get("valid", True) and result.get("error"):
+            raise HTTPException(status_code=422, detail=result["error"])
+        return result
+    except HTTPException:
+        raise
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"UPI inspection error: {exc}")
 
 
 # ---------------------------------------------------------------------------

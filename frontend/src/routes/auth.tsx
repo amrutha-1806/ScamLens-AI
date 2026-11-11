@@ -28,6 +28,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ThemeSwitcher } from "@/components/scamlens/primitives";
 import { CyberRobot, robotGuardian, useRobotGuardian, type RobotMood } from "@/components/scamlens/cyber-robot";
+import { TrySampleScamSandbox } from "@/components/scamlens/try-sample-scam";
 import {
   AUTH_CALLBACK_ERROR_KEY,
   formatAuthError,
@@ -1088,6 +1089,11 @@ function AuthPage() {
           </div>
         </div>
       </motion.main>
+
+      {/* Feature 5: Allow visitors to test SCAMLENS AI immediately without signing up */}
+      <div className="relative z-10 mt-4 w-full max-w-5xl px-1">
+        <TrySampleScamSandbox compactTriggerLabel="Try a Sample Scam (No Sign-Up Required)" />
+      </div>
     </div>
   );
 }

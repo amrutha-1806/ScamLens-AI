@@ -31,6 +31,7 @@ import { PageHeader, Panel } from "./primitives";
 import { useScamlensPreferences } from "@/lib/scamlens-preferences";
 import { cn } from "@/lib/utils";
 import { QUIZ_QUESTION_BANK, type QuizScenario } from "./learn-practise-questions";
+import { SpotTheScamInteractiveQuiz } from "./spot-the-scam-quiz";
 
 // ============================================================================
 // 1. EDUCATIONAL TOPICS ("LEARN" SECTION)
@@ -839,6 +840,9 @@ export function LearnPractisePage() {
           </div>
         </div>
       </motion.section>
+
+      {/* Feature 8: Spot the Scam Interactive Quiz (Instant Verdict & Warning Signs) */}
+      <SpotTheScamInteractiveQuiz />
 
       <AnimatePresence mode="wait">
         {/* ===================================================================== */}

@@ -63,6 +63,24 @@ KANGLISH_SCAM_PATTERNS = [
     (r"\b(otp\s+heli|hanchikollabedi)\b", "OTP credential request in Kannada"),
 ]
 
+# Native Devanagari (Hindi) scam lures and urgency patterns
+HINDI_NATIVE_SCAM_PATTERNS = [
+    (r"(आपका\s+खाता|बैंक\s+खाता|खाता\s+ब्लॉक|खाता\s+बंद)", "Account suspension threat in Hindi (Devanagari)"),
+    (r"(तुरंत|अविलंब|आज\s+ही)\s*(अपडेट|वेरीफाई|संपर्क|कॉल)", "Artificial urgency command in Hindi (Devanagari)"),
+    (r"(ओटीपी|OTP|पिन|पासवर्ड|केवाईसी|KYC|पैन|आधार)", "Sensitive credential or KYC request in Hindi (Devanagari)"),
+    (r"(इनाम|लॉटरी|लकी\s+ड्रॉ|कैशबैक|पुरस्कार|जीता\s+है)", "Prize or lottery lure in Hindi (Devanagari)"),
+    (r"(बिजली\s+कनेक्शन|बिजली\s+का\s+बिल|काट\s+दिया\s+जाएगा)", "Utility disconnection threat in Hindi (Devanagari)"),
+]
+
+# Native Kannada script scam lures and urgency patterns
+KANNADA_NATIVE_SCAM_PATTERNS = [
+    (r"(ನಿಮ್ಮ\s+ಖಾತೆ|ಬ್ಯಾಂಕ್\s+ಖಾತೆ|ಖಾತೆ\s+ಬ್ಲಾಕ್|ರದ್ದಾಗಿದೆ)", "Account suspension threat in Kannada script"),
+    (r"(ತಕ್ಷಣ|ಕೂಡಲೇ|ಈಗಲೇ)\s*(ಅಪ್ಡೇಟ್|ಸಂಪರ್ಕಿಸಿ|ಕರೆ\s+ಮಾಡಿ)", "Artificial urgency command in Kannada script"),
+    (r"(ಒಟಿಪಿ|OTP|ಪಿನ್|ಪಾಸ್ವರ್ಡ್|ಕೆವೈಸಿ|KYC|ಪ್ಯಾನ್|ಆಧಾರ್)", "Sensitive credential or KYC request in Kannada script"),
+    (r"(ಬಹುಮಾನ|ಲಾಟರಿ|ಲಕ್ಕಿ\s+ಡ್ರಾ|ಕ್ಯಾಶ್‌ಬ್ಯಾಕ್|ಗೆದ್ದಿದ್ದೀರಿ)", "Prize or lottery lure in Kannada script"),
+    (r"(ವಿದ್ಯುತ್\s+ಸಂಪರ್ಕ|ಕರೆಂಟ್\s+ಬಿಲ್|ಕಡಿತಗೊಳಿಸಲಾಗುವುದು)", "Utility disconnection threat in Kannada script"),
+]
+
 
 def detect_scripts(text: str) -> Dict[str, Any]:
     """
@@ -162,6 +180,24 @@ def analyze_multilingual_content(text: str) -> Dict[str, Any]:
                 "pattern_type": "Kanglish (Romanized Kannada)",
                 "description": description,
             })
+
+    if text:
+        for pattern, description in HINDI_NATIVE_SCAM_PATTERNS:
+            match = re.search(pattern, text)
+            if match:
+                hinglish_hits.append({
+                    "matched_text": match.group(0),
+                    "pattern_type": "Hindi (Devanagari)",
+                    "description": description,
+                })
+        for pattern, description in KANNADA_NATIVE_SCAM_PATTERNS:
+            match = re.search(pattern, text)
+            if match:
+                kanglish_hits.append({
+                    "matched_text": match.group(0),
+                    "pattern_type": "Kannada (Native Script)",
+                    "description": description,
+                })
 
     # Transparency notes
     transparency_notes: List[str] = []

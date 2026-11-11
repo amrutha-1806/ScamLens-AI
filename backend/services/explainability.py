@@ -51,6 +51,23 @@ CATEGORY_LABELS = {
     "action": "Call to action",
 }
 
+SUSPICIOUS_PHRASE_PATTERNS: List[Tuple[str, str, str]] = [
+    (r"act\s+immediately", "urgency", "Pressures you to act before verifying the sender."),
+    (r"verify\s+your\s+(?:account|identity|kyc)", "credential", "Attempts to lure you into submitting login or KYC details."),
+    (r"(?:your\s+)?account\s+will\s+be\s+(?:blocked|suspended|frozen|closed)", "urgency", "Threatens account loss to trigger panic."),
+    (r"share\s+your\s+(?:otp|pin|password|cvv)", "credential", "Directly requests secret authentication codes that banks never ask for."),
+    (r"claim\s+your\s+(?:reward|prize|cashback|bonus)", "reward", "Uses an unsolicited reward lure to trick you into clicking."),
+    (r"urgent\s+payment\s+required", "financial", "Demands an immediate financial transfer under pressure."),
+    (r"within\s+\d+\s*(?:hours?|hrs?|minutes?|mins?)", "urgency", "Sets an artificial countdown deadline."),
+    (r"electricity\s+connection\s+will\s+be\s+disconnected", "urgency", "Classic utility cutoff threat used in bill scams."),
+    (r"(?:aapka|apka)\s+(?:account|khata)\s+(?:block|band|suspend)", "urgency", "Hinglish threat of immediate account suspension."),
+    (r"turant\s+(?:kyc|update|verify|call)\s+kare(?:in)?", "urgency", "Hinglish high-pressure directive."),
+    (r"otp\s+share\s+kare(?:in)?", "credential", "Hinglish request to hand over a secret OTP."),
+    (r"nimma\s+(?:khate|account)\s+(?:block|raddagide)", "urgency", "Kanglish threat of account suspension."),
+    (r"खाता\s+(?:ब्लॉक|बंद)|तुरंत\s+(?:अपडेट|वेरीफाई|संपर्क)|ओटीपी\s+साझा", "urgency", "Hindi phrase pressuring urgent account or OTP action."),
+    (r"ನಿಮ್ಮ\s+ಖಾತೆ\s+ಬ್ಲಾಕ್|ತಕ್ಷಣ\s+(?:ಅಪ್ಡೇಟ್|ಸಂಪರ್ಕಿಸಿ)|ಒಟಿಪಿ\s+ಹಂಚಿಕೊಳ್ಳಿ", "urgency", "Kannada phrase pressuring urgent account or OTP action."),
+]
+
 
 def _keyword_lexicon() -> Dict[str, List[str]]:
     return {k: [w.lower() for w in v] for k, v in CONFIG.get("features", {}).get("keywords", {}).items()}
@@ -79,9 +96,19 @@ def _tokenize(text: str) -> List[Tuple[str, int, int]]:
 
 
 def rule_based_highlights(text: str) -> List[Dict[str, Any]]:
-    """Exact spans matching the configured keyword lexicons (rule-based)."""
+    """Exact spans matching phrase patterns and configured keyword lexicons (rule-based)."""
     spans: List[Dict[str, Any]] = []
     lowered = text.lower()
+    for pattern_str, category, _explanation in SUSPICIOUS_PHRASE_PATTERNS:
+        for m in re.finditer(pattern_str, text, flags=re.IGNORECASE):
+            spans.append({
+                "start": m.start(),
+                "end": m.end(),
+                "text": text[m.start():m.end()],
+                "category": category,
+                "category_label": CATEGORY_LABELS.get(category, category.title()),
+                "source": "rule",
+            })
     for category, words in _keyword_lexicon().items():
         for word in words:
             pattern = re.compile(r"(?<![a-z0-9])" + re.escape(word) + r"(?![a-z0-9])")
