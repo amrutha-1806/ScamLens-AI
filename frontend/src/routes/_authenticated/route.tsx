@@ -6,18 +6,20 @@ import { resolveSupabaseAuthCallback } from "@/lib/auth-error-helper";
 export const Route = createFileRoute("/_authenticated")({
   ssr: false,
   beforeLoad: async () => {
-    if (typeof window !== "undefined") {
-      const callback = await resolveSupabaseAuthCallback(supabase);
-      if (callback.handled) {
-        if (callback.authenticated) {
-          if (callback.type === "recovery") {
-            throw redirect({ to: "/reset-password" });
-          }
-          return;
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const callback = await resolveSupabaseAuthCallback(supabase);
+    if (callback.handled) {
+      if (callback.authenticated) {
+        if (callback.type === "recovery") {
+          throw redirect({ to: "/reset-password" });
         }
-        if (callback.error) {
-          throw redirect({ to: "/auth" });
-        }
+        return;
+      }
+      if (callback.error) {
+        throw redirect({ to: "/auth" });
       }
     }
 

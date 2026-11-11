@@ -49,6 +49,15 @@ export interface AuthCallbackResolution {
   error: string | null;
 }
 
+const INITIAL_BROWSER_URL_SNAPSHOT =
+  typeof window !== "undefined"
+    ? {
+        search: window.location.search,
+        hash: window.location.hash,
+        consumed: false,
+      }
+    : null;
+
 /**
  * Inspects the current browser URL for Supabase email confirmation / recovery callback parameters:
  * - PKCE authorization code (?code=...)
@@ -65,10 +74,24 @@ export async function resolveSupabaseAuthCallback(
     return { handled: false, authenticated: false, type: null, error: null };
   }
 
-  const searchParams = new URLSearchParams(window.location.search);
-  const rawHash = window.location.hash.startsWith("#")
-    ? window.location.hash.slice(1)
-    : window.location.hash;
+  let rawSearch = window.location.search;
+  let rawHashStr = window.location.hash;
+
+  if (
+    !rawSearch &&
+    !rawHashStr &&
+    INITIAL_BROWSER_URL_SNAPSHOT &&
+    !INITIAL_BROWSER_URL_SNAPSHOT.consumed
+  ) {
+    rawSearch = INITIAL_BROWSER_URL_SNAPSHOT.search;
+    rawHashStr = INITIAL_BROWSER_URL_SNAPSHOT.hash;
+  }
+  if (INITIAL_BROWSER_URL_SNAPSHOT) {
+    INITIAL_BROWSER_URL_SNAPSHOT.consumed = true;
+  }
+
+  const searchParams = new URLSearchParams(rawSearch);
+  const rawHash = rawHashStr.startsWith("#") ? rawHashStr.slice(1) : rawHashStr;
   const hashParams = new URLSearchParams(rawHash);
 
   const code = searchParams.get("code");
