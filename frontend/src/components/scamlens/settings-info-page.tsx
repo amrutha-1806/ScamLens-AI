@@ -167,6 +167,7 @@ export function SettingsInformationPage({ initialTab = "ai-models" }: { initialT
   const info = modelQuery.data;
   const records = history.data ?? [];
   const connected = health.isSuccess && health.data.healthy;
+  const wakingUp = !connected && (health.isPending || (health.isFetching && !health.isError));
 
   const metricLabels: Record<string, string> = {
     accuracy: "Holdout Accuracy",
@@ -280,11 +281,13 @@ export function SettingsInformationPage({ initialTab = "ai-models" }: { initialT
                           "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[10px] font-semibold",
                           connected
                             ? "border-safe/35 bg-safe/10 text-safe"
-                            : "border-warning/35 bg-warning/10 text-warning"
+                            : wakingUp
+                              ? "border-primary/35 bg-primary/10 text-primary"
+                              : "border-warning/35 bg-warning/10 text-warning"
                         )}
                       >
-                        <span className={cn("size-1.5 rounded-full", connected ? "bg-safe" : "bg-warning")} />
-                        {connected ? "Backend Connected & Model Loaded" : "Backend Unreachable"}
+                        <span className={cn("size-1.5 rounded-full", connected ? "bg-safe" : wakingUp ? "bg-primary animate-pulse" : "bg-warning")} />
+                        {connected ? "Backend Connected & Model Loaded" : wakingUp ? "Waking up backend…" : "Backend unavailable"}
                       </span>
                     </div>
                     <p className="mt-2 text-lg font-bold text-foreground">{info.model ?? "Not provided"}</p>

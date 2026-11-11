@@ -23,15 +23,20 @@ from src.utils.logger import get_logger
 
 logger = get_logger("MLService")
 
-# Singleton predictor (loaded once on first call)
+# Singleton predictor (loaded once on first call with thread-safe locking)
+import threading
+
 _predictor: ScamLensPredictor | None = None
+_ml_lock = threading.Lock()
 
 
 def _get_predictor() -> ScamLensPredictor:
     global _predictor
     if _predictor is None:
-        logger.info("Loading ScamLensPredictor for FastAPI backend...")
-        _predictor = get_predictor()
+        with _ml_lock:
+            if _predictor is None:
+                logger.info("Loading ScamLensPredictor for FastAPI backend...")
+                _predictor = get_predictor()
     return _predictor
 
 

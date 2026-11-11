@@ -77,6 +77,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const path = useRouterState({ select: (state) => state.location.pathname });
   const health = useQuery(healthQueryOptions());
   const connected = health.isSuccess && health.data.healthy;
+  const wakingUp = !connected && (health.isPending || (health.isFetching && !health.isError));
 
   // Greet the user with a friendly wave once per signed-in session
   useEffect(() => {
@@ -215,18 +216,18 @@ export function AppShell({ children }: { children: ReactNode }) {
 
       <div className="border-t border-sidebar-border p-3">
         <div className={cn("flex items-center gap-3 rounded-lg bg-secondary p-3", collapsed && scope === "desktop" && "justify-center p-2")}>
-          <span className={cn("relative size-2 shrink-0 rounded-full", connected ? "bg-safe" : "bg-warning")}>
+          <span className={cn("relative size-2 shrink-0 rounded-full", connected ? "bg-safe" : wakingUp ? "bg-primary" : "bg-warning")}>
             {(health.isFetching || connected) && !shouldReduceMotion && (
-              <span className={cn("absolute inset-0 animate-ping rounded-full opacity-40", connected ? "bg-safe" : "bg-warning")} />
+              <span className={cn("absolute inset-0 animate-ping rounded-full opacity-40", connected ? "bg-safe" : wakingUp ? "bg-primary" : "bg-warning")} />
             )}
           </span>
           {(!collapsed || scope === "mobile") && (
             <div className="min-w-0">
               <p className="truncate text-xs font-medium text-sidebar-foreground">
-                {connected ? "Connected" : "Backend unavailable"}
+                {connected ? "Connected" : wakingUp ? "Waking up backend…" : "Backend unavailable"}
               </p>
               <p className="mt-0.5 truncate text-[10px] text-muted-foreground">
-                {connected ? "Python service is healthy" : "Static analysis only"}
+                {connected ? "Python service is healthy" : wakingUp ? "Connecting to ML service…" : "Static analysis only"}
               </p>
             </div>
           )}
@@ -333,7 +334,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 
             <div className="hidden shrink-0 items-center gap-2 rounded-lg border border-border bg-card px-3 py-1.5 text-xs text-muted-foreground md:flex">
               <FileSearch className={cn("size-3.5", connected ? "text-safe" : "text-primary")} />
-              <span>{connected ? "ML analysis connected" : "Static analysis only"}</span>
+              <span>{connected ? "ML analysis connected" : wakingUp ? "Waking up backend…" : "Static analysis only"}</span>
             </div>
 
             {/* Complete Profile Menu & Settings Dropdown */}

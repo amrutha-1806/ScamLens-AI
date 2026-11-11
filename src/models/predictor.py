@@ -189,13 +189,18 @@ class ScamLensPredictor:
         }
 
 
-# Singleton instance helper
-_predictor_instance = None
+# Singleton instance helper (thread-safe double-checked locking)
+import threading
+
+_predictor_instance: Optional[ScamLensPredictor] = None
+_predictor_lock = threading.Lock()
 
 
 def get_predictor() -> ScamLensPredictor:
-    """Return a singleton instance of ScamLensPredictor."""
+    """Return a singleton instance of ScamLensPredictor without duplicate loading."""
     global _predictor_instance
     if _predictor_instance is None:
-        _predictor_instance = ScamLensPredictor()
+        with _predictor_lock:
+            if _predictor_instance is None:
+                _predictor_instance = ScamLensPredictor()
     return _predictor_instance

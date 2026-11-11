@@ -274,8 +274,10 @@ class TestExplainableAI(unittest.TestCase):
 
     def test_token_attributions_with_model(self):
         """Verify leave-one-word-out perturbation attribution on ScamLensPredictor."""
-        from src.models.predictor import ScamLensPredictor
-        predictor = ScamLensPredictor()
+        from src.models.predictor import get_predictor
+        from backend.services.ml_service import _get_predictor
+        predictor = get_predictor()
+        self.assertIs(predictor, _get_predictor())
         text = "Congratulations! You won a $1000 prize. Call now."
         explanation = explain_text(predictor, text, model_probability=0.92)
         self.assertIsInstance(explanation, dict)

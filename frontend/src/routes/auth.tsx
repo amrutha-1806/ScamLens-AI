@@ -1,4 +1,5 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState, type FormEvent } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import {
@@ -17,6 +18,7 @@ import {
   ShieldCheck,
   Signal,
   Sparkles,
+  User,
   UserPlus,
   Wifi,
 } from "lucide-react";
@@ -25,10 +27,15 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ThemeSwitcher } from "@/components/scamlens/primitives";
-import { ScamLensIcon } from "@/components/scamlens/logo";
 import { CyberRobot, robotGuardian, useRobotGuardian, type RobotMood } from "@/components/scamlens/cyber-robot";
-import { formatAuthError } from "@/lib/auth-error-helper";
+import {
+  AUTH_CALLBACK_ERROR_KEY,
+  formatAuthError,
+  getAuthRedirectUrl,
+  resolveSupabaseAuthCallback,
+} from "@/lib/auth-error-helper";
 import { useScamlensPreferences } from "@/lib/scamlens-preferences";
+import { healthQueryOptions } from "@/lib/scamlens-queries";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/auth")({
@@ -91,22 +98,74 @@ const SECURITY_INFO_ITEMS = [
 
 function AuthPage() {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const { shouldReduceMotion, updatePreferences } = useScamlensPreferences();
   const [mode, setMode] = useState<Mode>("signin");
+  const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [show, setShow] = useState(false);
+  const [showConfirm, setShowConfirm] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
-  const [focusedField, setFocusedField] = useState<"email" | "password" | null>(null);
+  const [focusedField, setFocusedField] = useState<
+    "name" | "email" | "password" | "confirmPassword" | null
+  >(null);
   const [cursorPos, setCursorPos] = useState<{ x: number; y: number } | null>(null);
   const [isInsideSignInArea, setIsInsideSignInArea] = useState(false);
 
   useEffect(() => {
-    supabase.auth.getUser().then(({ data }) => {
-      if (data.user) navigate({ to: "/", replace: true });
-    });
+    // Non-blocking backend warm-up on the authentication page using the shared health query cache
+    void queryClient.prefetchQuery(healthQueryOptions());
+
+    let active = true;
+    async function initAuthPage() {
+      const callback = await resolveSupabaseAuthCallback(supabase);
+      if (!active) return;
+
+      if (callback.handled) {
+        if (callback.authenticated) {
+          if (callback.type === "recovery") {
+            navigate({ to: "/reset-password", replace: true });
+            return;
+          }
+          robotGuardian.greet("Email verified! Welcome to SCAMLENS AI.");
+          navigate({ to: "/", replace: true });
+          return;
+        }
+        if (callback.error) {
+          try {
+            sessionStorage.removeItem(AUTH_CALLBACK_ERROR_KEY);
+          } catch {
+            // Ignore storage errors
+          }
+          setError(callback.error);
+          return;
+        }
+      }
+
+      try {
+        const storedErr = sessionStorage.getItem(AUTH_CALLBACK_ERROR_KEY);
+        if (storedErr) {
+          sessionStorage.removeItem(AUTH_CALLBACK_ERROR_KEY);
+          setError(storedErr);
+        }
+      } catch {
+        // Ignore storage errors
+      }
+
+      const { data } = await supabase.auth.getUser();
+      if (active && data.user) {
+        navigate({ to: "/", replace: true });
+      }
+    }
+
+    void initAuthPage();
+    return () => {
+      active = false;
+    };
   }, [navigate]);
 
   const switchMode = (m: Mode) => {
@@ -119,57 +178,95 @@ function AuthPage() {
     e.preventDefault();
     setError(null);
     setInfo(null);
-    if (!emailOk(email)) return setError("Enter a valid email address.");
-    if (mode !== "forgot" && password.length < (mode === "signup" ? 8 : 1)) {
-      return setError(
-        mode === "signup"
-          ? "Password must be at least 8 characters."
-          : "Enter your password."
-      );
-    }
-    setBusy(true);
-    try {
-      if (mode === "signin") {
-        const { error } = await supabase.auth.signInWithPassword({
-          email: email.trim(),
+
+    const trimmedEmail = email.trim();
+    if (!emailOk(trimmedEmail)) return setError("Enter a valid email address.");
+
+    if (mode === "signup") {
+      if (name.trim().length < 2) {
+        return setError("Please enter your full name (at least 2 characters).");
+      }
+      if (password.length < 8) {
+        return setError("Password must be at least 8 characters.");
+      }
+      if (password !== confirmPassword) {
+        return setError("Passwords do not match. Please verify.");
+      }
+
+      setBusy(true);
+      try {
+        const { data, error: signUpError } = await supabase.auth.signUp({
+          email: trimmedEmail,
           password,
+          options: {
+            data: {
+              display_name: name.trim(),
+              full_name: name.trim(),
+            },
+            emailRedirectTo: getAuthRedirectUrl("/"),
+          },
         });
-        if (error) throw error;
-        robotGuardian.greet("Welcome back! Ready to inspect suspicious links and messages.");
-        navigate({ to: "/", replace: true });
-      } else if (mode === "signup") {
-        const { data, error } = await supabase.auth.signUp({
-          email: email.trim(),
-          password,
-          options: { emailRedirectTo: window.location.origin },
-        });
-        if (error) throw error;
+        if (signUpError) throw signUpError;
+
         if (data.session) {
           robotGuardian.greet("Welcome to SCAMLENS AI! Your security guardian is active.");
           navigate({ to: "/", replace: true });
         } else {
           setInfo(
-            "Account created! Please check your email to confirm your address before signing in."
+            `Account created! A confirmation link has been sent to ${trimmedEmail}. Please check your email to confirm your account and sign in.`
           );
           setMode("signin");
           setPassword("");
+          setConfirmPassword("");
         }
-      } else {
-        const { error } = await supabase.auth.resetPasswordForEmail(
-          email.trim(),
+      } catch (err) {
+        setError(formatAuthError(err, "signup"));
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
+
+    if (mode === "signin") {
+      if (password.length < 1) {
+        return setError("Enter your password.");
+      }
+      setBusy(true);
+      try {
+        const { error: signInError } = await supabase.auth.signInWithPassword({
+          email: trimmedEmail,
+          password,
+        });
+        if (signInError) throw signInError;
+
+        robotGuardian.greet("Welcome back! Ready to inspect suspicious links and messages.");
+        navigate({ to: "/", replace: true });
+      } catch (err) {
+        setError(formatAuthError(err, "signin"));
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
+
+    if (mode === "forgot") {
+      setBusy(true);
+      try {
+        const { error: resetError } = await supabase.auth.resetPasswordForEmail(
+          trimmedEmail,
           {
-            redirectTo: `${window.location.origin}/reset-password`,
+            redirectTo: getAuthRedirectUrl("/reset-password"),
           }
         );
-        if (error) throw error;
+        if (resetError) throw resetError;
         setInfo(
           "If an account exists for that email, a password reset link has been sent."
         );
+      } catch (err) {
+        setError(formatAuthError(err, "forgot"));
+      } finally {
+        setBusy(false);
       }
-    } catch (err) {
-      setError(formatAuthError(err, mode));
-    } finally {
-      setBusy(false);
     }
   }
 
@@ -182,31 +279,32 @@ function AuthPage() {
         ? "greeting"
         : guardianState.mood;
 
+  const isPasswordFocused =
+    focusedField === "password" || focusedField === "confirmPassword";
+  const isPasswordShown =
+    (focusedField === "password" && show) ||
+    (focusedField === "confirmPassword" && showConfirm) ||
+    show ||
+    showConfirm;
+
   const descriptionText =
     mode === "signin"
       ? "Sign in to access intelligent scam and phishing detection."
       : mode === "signup"
-        ? "Create your account to access intelligent scam and phishing detection."
+        ? "Create your account with your name, email and password."
         : "Enter your registered email to receive a password recovery link.";
 
   return (
     <div className="relative flex min-h-screen w-full flex-col items-center justify-center overflow-x-hidden bg-gradient-to-br from-slate-100 via-sky-50 to-indigo-100 px-3 py-4 text-foreground sm:px-6 dark:bg-none dark:bg-[#040812]">
-      {/* =================================================================== */}
-      {/* 1. CYBERSECURITY ATMOSPHERE (Grid, Red/Cyan Glows, Network Lines)   */}
-      {/* =================================================================== */}
+      {/* 1. CYBERSECURITY ATMOSPHERE (Grid, Red/Cyan Glows, Network Lines) */}
       <div className="pointer-events-none absolute inset-0 overflow-hidden">
-        {/* Fine technical grid pattern */}
         <div className="absolute inset-0 bg-[linear-gradient(to_right,rgba(14,165,233,0.07)_1px,transparent_1px),linear-gradient(to_bottom,rgba(14,165,233,0.07)_1px,transparent_1px)] bg-[size:36px_36px] dark:bg-[linear-gradient(to_right,rgba(56,189,248,0.045)_1px,transparent_1px),linear-gradient(to_bottom,rgba(56,189,248,0.045)_1px,transparent_1px)]" />
-
-        {/* Radial vignette to keep focus on the center smartphone */}
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,transparent_30%,rgba(148,163,184,0.18)_100%)] dark:bg-[radial-gradient(circle_at_center,transparent_20%,rgba(2,5,12,0.85)_100%)]" />
 
-        {/* Subtle cyan and crimson/red ambient lighting behind the phone */}
         <div className="absolute left-1/2 top-1/2 h-[540px] w-[540px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-cyan-500/12 blur-[130px]" />
         <div className="absolute left-[28%] top-[24%] h-[320px] w-[320px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-red-500/8 blur-[120px]" />
         <div className="absolute left-[72%] top-[74%] h-[340px] w-[340px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-sky-500/10 blur-[125px]" />
 
-        {/* Decorative SVG network lines on desktop */}
         <svg
           className="hidden h-full w-full opacity-35 lg:block"
           viewBox="0 0 1440 900"
@@ -226,43 +324,24 @@ function AuthPage() {
               <stop offset="100%" stopColor="rgba(34,211,238,0)" />
             </linearGradient>
           </defs>
-          {/* Left network geometry */}
           <path
             d="M90 190 L280 270 L360 440 L230 630 L80 710"
             stroke="url(#cyberLineLeft)"
             strokeWidth="1.2"
             strokeDasharray="4 6"
           />
-          <path
-            d="M190 120 L340 260 L480 260"
-            stroke="url(#cyberLineLeft)"
-            strokeWidth="1"
-          />
-          <path
-            d="M140 520 L320 520 L450 610"
-            stroke="url(#cyberLineLeft)"
-            strokeWidth="1"
-          />
-          {/* Right network geometry */}
+          <path d="M190 120 L340 260 L480 260" stroke="url(#cyberLineLeft)" strokeWidth="1" />
+          <path d="M140 520 L320 520 L450 610" stroke="url(#cyberLineLeft)" strokeWidth="1" />
           <path
             d="M1350 200 L1160 280 L1080 450 L1210 640 L1360 720"
             stroke="url(#cyberLineRight)"
             strokeWidth="1.2"
             strokeDasharray="4 6"
           />
-          <path
-            d="M1250 140 L1100 270 L960 270"
-            stroke="url(#cyberLineRight)"
-            strokeWidth="1"
-          />
-          <path
-            d="M1300 530 L1120 530 L990 620"
-            stroke="url(#cyberLineRight)"
-            strokeWidth="1"
-          />
+          <path d="M1250 140 L1100 270 L960 270" stroke="url(#cyberLineRight)" strokeWidth="1" />
+          <path d="M1300 530 L1120 530 L990 620" stroke="url(#cyberLineRight)" strokeWidth="1" />
         </svg>
 
-        {/* Subtle glowing network particles */}
         {AMBIENT_NODES.map((node) => (
           <motion.span
             key={node.id}
@@ -285,7 +364,6 @@ function AuthPage() {
           />
         ))}
 
-        {/* Left Floating Decorative Shield Motif (Desktop) */}
         <motion.div
           animate={shouldReduceMotion ? { y: 0 } : { y: [-5, 5, -5] }}
           transition={{ duration: 6, repeat: Infinity, ease: "easeInOut" }}
@@ -303,7 +381,6 @@ function AuthPage() {
           </div>
         </motion.div>
 
-        {/* Right Floating Decorative Lock Motif (Desktop) */}
         <motion.div
           animate={shouldReduceMotion ? { y: 0 } : { y: [5, -5, 5] }}
           transition={{ duration: 6.5, repeat: Infinity, ease: "easeInOut" }}
@@ -322,9 +399,7 @@ function AuthPage() {
         </motion.div>
       </div>
 
-      {/* =================================================================== */}
-      {/* 2. TOP AMBIENT STATUS PILL & MOTION PREFERENCE TOGGLE               */}
-      {/* =================================================================== */}
+      {/* 2. TOP AMBIENT STATUS PILL & THEME TOGGLE */}
       <div className="relative z-20 mb-2.5 flex w-full max-w-[424px] flex-wrap items-center justify-between gap-2 px-1">
         <div className="inline-flex items-center gap-2 rounded-full border border-sky-300/70 bg-white/85 px-3 py-1 text-[10px] font-semibold uppercase tracking-widest text-sky-700 shadow-[0_4px_18px_rgba(14,165,233,0.15)] backdrop-blur-md dark:border-cyan-500/30 dark:bg-slate-950/80 dark:text-cyan-300 dark:shadow-[0_0_20px_rgba(34,211,238,0.15)]">
           <span
@@ -359,9 +434,7 @@ function AuthPage() {
         </div>
       </div>
 
-      {/* =================================================================== */}
-      {/* 3. CENTERED REALISTIC SMARTPHONE CONTAINING THE LOGIN INTERFACE     */}
-      {/* =================================================================== */}
+      {/* 3. CENTERED SMARTPHONE FRAME */}
       <motion.main
         initial={shouldReduceMotion ? false : { opacity: 0, y: 12, scale: 0.985 }}
         animate={{ opacity: 1, y: 0, scale: 1 }}
@@ -376,12 +449,9 @@ function AuthPage() {
         }}
         className="relative z-10 w-full max-w-[424px]"
       >
-        {/* Subtle Cyan Halo Glow Behind Smartphone Frame */}
         <div className="pointer-events-none absolute -inset-3 rounded-[3.2rem] bg-gradient-to-b from-sky-400/25 via-indigo-300/15 to-cyan-300/20 blur-xl dark:from-cyan-500/20 dark:via-sky-500/10 dark:to-red-500/10" />
 
-        {/* Outer Titanium / Metallic Smartphone Bezel */}
         <div className="relative rounded-[2.85rem] border-[3px] border-sky-400/50 bg-gradient-to-b from-slate-700 via-slate-800 to-slate-900 p-2 shadow-[0_28px_70px_-14px_rgba(15,23,42,0.45),0_0_30px_rgba(14,165,233,0.18),inset_0_1px_1px_rgba(255,255,255,0.25)] sm:p-2.5 dark:border-cyan-400/40 dark:from-slate-800 dark:via-slate-900 dark:to-slate-950 dark:shadow-[0_28px_80px_-12px_rgba(0,0,0,0.92),0_0_40px_rgba(34,211,238,0.18),inset_0_1px_1px_rgba(255,255,255,0.22)]">
-          {/* Physical Hardware Side Buttons */}
           <div
             aria-hidden="true"
             className="absolute -left-[5px] top-24 h-9 w-[3px] rounded-l bg-slate-700"
@@ -399,15 +469,13 @@ function AuthPage() {
             className="absolute -right-[5px] top-32 h-16 w-[3px] rounded-r bg-slate-700"
           />
 
-          {/* Inner Polished Smartphone Screen */}
           <div className="relative flex flex-col overflow-hidden rounded-[2.35rem] border border-slate-200 bg-gradient-to-b from-white via-sky-50/80 to-slate-100 dark:border-slate-800/90 dark:from-[#081226] dark:via-[#060C1A] dark:to-[#040812]">
-            {/* Layered inner-screen lighting, fine micro-grid & glass reflection */}
             <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(to_right,rgba(14,165,233,0.05)_1px,transparent_1px),linear-gradient(to_bottom,rgba(14,165,233,0.05)_1px,transparent_1px)] bg-[size:22px_22px] dark:bg-[linear-gradient(to_right,rgba(56,189,248,0.03)_1px,transparent_1px),linear-gradient(to_bottom,rgba(56,189,248,0.03)_1px,transparent_1px)]" />
             <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(135deg,rgba(255,255,255,0.055)_0%,transparent_36%,rgba(14,165,233,0.03)_100%)]" />
             <div className="pointer-events-none absolute -top-16 left-1/2 h-44 w-72 -translate-x-1/2 rounded-full bg-sky-300/30 blur-2xl dark:bg-cyan-500/20" />
             <div className="pointer-events-none absolute -bottom-16 left-1/2 h-36 w-64 -translate-x-1/2 rounded-full bg-indigo-300/20 blur-2xl dark:bg-blue-600/15" />
 
-            {/* Smartphone Status Bar & Dynamic Island */}
+            {/* Smartphone Status Bar */}
             <div className="relative z-20 flex items-center justify-between px-6 pt-3 pb-1.5 text-[11px] font-semibold tracking-tight text-slate-800 dark:text-slate-200">
               <span>9:41</span>
               <div
@@ -424,13 +492,9 @@ function AuthPage() {
               </div>
             </div>
 
-            {/* Inner Mobile App Surface */}
+            {/* Inner Content */}
             <div className="relative z-10 flex flex-col px-4 pt-2 pb-4 sm:px-6 sm:pt-2.5 sm:pb-4">
-              {/* ============================================================= */}
-              {/* 1. ANIMATED WELCOME & BRANDING SECTION                        */}
-              {/* ============================================================= */}
               <div className="flex flex-col items-center text-center">
-                {/* Smooth Fade-in "AI-POWERED PROTECTION" Badge */}
                 <motion.div
                   initial={shouldReduceMotion ? false : { opacity: 0, y: -6, scale: 0.96 }}
                   animate={{ opacity: 1, y: 0, scale: 1 }}
@@ -451,7 +515,7 @@ function AuthPage() {
                   AI-POWERED PROTECTION
                 </motion.div>
 
-                {/* AI Sentinel Robot Mascot (Entire head tracks cursor, eyes move independently, neck/body stable) */}
+                {/* Cyber Robot Mascot */}
                 <motion.div
                   initial={shouldReduceMotion ? false : { opacity: 0, scale: 0.88 }}
                   animate={{ opacity: 1, scale: 1 }}
@@ -463,12 +527,11 @@ function AuthPage() {
                     mood={authRobotMood}
                     cursorPos={cursorPos}
                     isInsideSignInArea={isInsideSignInArea}
-                    isPasswordFocused={focusedField === "password"}
-                    showPassword={show}
+                    isPasswordFocused={isPasswordFocused}
+                    showPassword={isPasswordShown}
                   />
                 </motion.div>
 
-                {/* Staggered Fade-and-Rise Welcome Heading & Tagline */}
                 <motion.div
                   initial={shouldReduceMotion ? false : { opacity: 0, y: 8 }}
                   animate={{ opacity: 1, y: 0 }}
@@ -503,9 +566,7 @@ function AuthPage() {
                 </motion.div>
               </div>
 
-              {/* ============================================================= */}
-              {/* 2. INTERACTIVE DARK-GLASS AUTHENTICATION FORM                 */}
-              {/* ============================================================= */}
+              {/* Form Container */}
               <motion.div
                 initial={shouldReduceMotion ? false : { opacity: 0, y: 10 }}
                 animate={{ opacity: 1, y: 0 }}
@@ -516,7 +577,7 @@ function AuthPage() {
                 }}
                 className="mt-3.5 rounded-2xl border border-slate-200 bg-white/85 p-3.5 shadow-[0_8px_24px_-12px_rgba(15,23,42,0.18)] backdrop-blur-md sm:p-4 dark:border-slate-800/90 dark:bg-slate-950/65 dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]"
               >
-                {/* Animated Sliding Tab Indicator Bar */}
+                {/* Sliding Tabs: Sign In / Create Account */}
                 <div className="mb-3 grid grid-cols-2 rounded-xl border border-slate-200 bg-slate-100/90 p-1 text-[11px] font-semibold dark:border-slate-800/90 dark:bg-[#050A14]/90">
                   {(
                     [
@@ -527,7 +588,7 @@ function AuthPage() {
                     <button
                       key={tab.id}
                       type="button"
-                      onClick={() => switchMode(tab.id)}
+                      onClick={() => switchMode(tab.id as Mode)}
                       className={cn(
                         "relative min-h-9 rounded-lg py-1.5 transition-colors duration-200 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-cyan-400",
                         tab.active
@@ -563,7 +624,59 @@ function AuthPage() {
                     className="space-y-3"
                     noValidate
                   >
-                    {/* Staggered Field 1: Email Dark-Glass Input */}
+                    {/* Full Name field for Sign Up */}
+                    {mode === "signup" && (
+                      <motion.div
+                        initial={shouldReduceMotion ? false : { opacity: 0, y: 6 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ duration: shouldReduceMotion ? 0 : 0.22 }}
+                        className="space-y-1"
+                      >
+                        <Label
+                          htmlFor="name"
+                          className="text-[11px] font-semibold tracking-wide text-slate-700 dark:text-slate-200"
+                        >
+                          Full Name
+                        </Label>
+                        <motion.div
+                          animate={
+                            focusedField === "name"
+                              ? {
+                                  borderColor: "rgba(34, 211, 238, 0.82)",
+                                  boxShadow: "0 0 20px rgba(34, 211, 238, 0.2)",
+                                }
+                              : {
+                                  borderColor: "hsl(var(--border))",
+                                  boxShadow: "0 0 0px rgba(34, 211, 238, 0)",
+                                }
+                          }
+                          transition={{ duration: shouldReduceMotion ? 0 : 0.2 }}
+                          className="group relative flex items-center rounded-xl border border-slate-300 bg-white transition-colors hover:border-slate-400 dark:border-slate-800/95 dark:bg-[#070E1C]/90 dark:hover:border-slate-700"
+                        >
+                          <span
+                            className={cn(
+                              "pointer-events-none pl-3 transition-colors",
+                              focusedField === "name" ? "text-sky-600 dark:text-cyan-300" : "text-slate-400"
+                            )}
+                          >
+                            <User className="size-4" />
+                          </span>
+                          <Input
+                            id="name"
+                            type="text"
+                            placeholder="e.g. Alex Morgan"
+                            autoComplete="name"
+                            value={name}
+                            onFocus={() => setFocusedField("name")}
+                            onBlur={() => setFocusedField((prev) => (prev === "name" ? null : prev))}
+                            onChange={(e) => setName(e.target.value)}
+                            className="h-10 border-0 bg-transparent pl-2.5 pr-3 text-sm text-slate-900 placeholder:text-slate-400 focus-visible:ring-0 focus-visible:ring-offset-0 sm:h-9 dark:text-slate-100 dark:placeholder:text-slate-500"
+                          />
+                        </motion.div>
+                      </motion.div>
+                    )}
+
+                    {/* Email address field */}
                     <motion.div
                       initial={shouldReduceMotion ? false : { opacity: 0, y: 6 }}
                       animate={{ opacity: 1, y: 0 }}
@@ -594,20 +707,14 @@ function AuthPage() {
                         transition={{ duration: shouldReduceMotion ? 0 : 0.2 }}
                         className="group relative flex items-center rounded-xl border border-slate-300 bg-white transition-colors hover:border-slate-400 dark:border-slate-800/95 dark:bg-[#070E1C]/90 dark:hover:border-slate-700"
                       >
-                        <motion.span
-                          animate={
-                            focusedField === "email" && !shouldReduceMotion
-                              ? { scale: 1.12 }
-                              : { scale: 1 }
-                          }
-                          transition={{ duration: 0.18 }}
+                        <span
                           className={cn(
                             "pointer-events-none pl-3 transition-colors",
                             focusedField === "email" ? "text-sky-600 dark:text-cyan-300" : "text-slate-400"
                           )}
                         >
                           <Mail className="size-4" />
-                        </motion.span>
+                        </span>
                         <Input
                           id="email"
                           type="email"
@@ -615,16 +722,14 @@ function AuthPage() {
                           autoComplete="email"
                           value={email}
                           onFocus={() => setFocusedField("email")}
-                          onBlur={() =>
-                            setFocusedField((prev) => (prev === "email" ? null : prev))
-                          }
+                          onBlur={() => setFocusedField((prev) => (prev === "email" ? null : prev))}
                           onChange={(e) => setEmail(e.target.value)}
                           className="h-10 border-0 bg-transparent pl-2.5 pr-3 text-sm text-slate-900 placeholder:text-slate-400 focus-visible:ring-0 focus-visible:ring-offset-0 sm:h-9 dark:text-slate-100 dark:placeholder:text-slate-500"
                         />
                       </motion.div>
                     </motion.div>
 
-                    {/* Staggered Field 2: Password Dark-Glass Input */}
+                    {/* Password field */}
                     {mode !== "forgot" && (
                       <motion.div
                         initial={shouldReduceMotion ? false : { opacity: 0, y: 6 }}
@@ -669,36 +774,26 @@ function AuthPage() {
                           transition={{ duration: shouldReduceMotion ? 0 : 0.2 }}
                           className="group relative flex items-center rounded-xl border border-slate-300 bg-white transition-colors hover:border-slate-400 dark:border-slate-800/95 dark:bg-[#070E1C]/90 dark:hover:border-slate-700"
                         >
-                          <motion.span
-                            animate={
-                              focusedField === "password" && !shouldReduceMotion
-                                ? { scale: 1.12, rotate: -6 }
-                                : { scale: 1, rotate: 0 }
-                            }
-                            transition={{ duration: 0.18 }}
+                          <span
                             className={cn(
                               "pointer-events-none pl-3 transition-colors",
                               focusedField === "password" ? "text-sky-600 dark:text-cyan-300" : "text-slate-400"
                             )}
                           >
                             <KeyRound className="size-4" />
-                          </motion.span>
+                          </span>
                           <Input
                             id="password"
                             type={show ? "text" : "password"}
                             placeholder={
-                              mode === "signup"
-                                ? "Minimum 8 characters"
-                                : "Enter your password"
+                              mode === "signup" ? "Minimum 8 characters" : "Enter your password"
                             }
                             autoComplete={
                               mode === "signup" ? "new-password" : "current-password"
                             }
                             value={password}
                             onFocus={() => setFocusedField("password")}
-                            onBlur={() =>
-                              setFocusedField((prev) => (prev === "password" ? null : prev))
-                            }
+                            onBlur={() => setFocusedField((prev) => (prev === "password" ? null : prev))}
                             onChange={(e) => setPassword(e.target.value)}
                             className="h-10 border-0 bg-transparent pl-2.5 pr-9 text-sm text-slate-900 placeholder:text-slate-400 focus-visible:ring-0 focus-visible:ring-offset-0 sm:h-9 dark:text-slate-100 dark:placeholder:text-slate-500"
                           />
@@ -711,25 +806,13 @@ function AuthPage() {
                             <AnimatePresence mode="wait" initial={false}>
                               <motion.span
                                 key={show ? "eye-off" : "eye-on"}
-                                initial={
-                                  shouldReduceMotion
-                                    ? false
-                                    : { opacity: 0, rotate: -25, scale: 0.72 }
-                                }
+                                initial={shouldReduceMotion ? false : { opacity: 0, rotate: -25, scale: 0.72 }}
                                 animate={{ opacity: 1, rotate: 0, scale: 1 }}
-                                exit={
-                                  shouldReduceMotion
-                                    ? { opacity: 1 }
-                                    : { opacity: 0, rotate: 25, scale: 0.72 }
-                                }
+                                exit={shouldReduceMotion ? { opacity: 1 } : { opacity: 0, rotate: 25, scale: 0.72 }}
                                 transition={{ duration: shouldReduceMotion ? 0 : 0.15 }}
                                 className="inline-flex"
                               >
-                                {show ? (
-                                  <EyeOff className="size-3.5" />
-                                ) : (
-                                  <Eye className="size-3.5" />
-                                )}
+                                {show ? <EyeOff className="size-3.5" /> : <Eye className="size-3.5" />}
                               </motion.span>
                             </AnimatePresence>
                           </button>
@@ -737,7 +820,83 @@ function AuthPage() {
                       </motion.div>
                     )}
 
-                    {/* Animated Validation / Error & Info Alerts */}
+                    {/* Confirm Password field for Sign Up */}
+                    {mode === "signup" && (
+                      <motion.div
+                        initial={shouldReduceMotion ? false : { opacity: 0, y: 6 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{
+                          duration: shouldReduceMotion ? 0 : 0.24,
+                          delay: shouldReduceMotion ? 0 : 0.14,
+                        }}
+                        className="space-y-1"
+                      >
+                        <Label
+                          htmlFor="confirmPassword"
+                          className="text-[11px] font-semibold tracking-wide text-slate-700 dark:text-slate-200"
+                        >
+                          Confirm Password
+                        </Label>
+                        <motion.div
+                          animate={
+                            focusedField === "confirmPassword"
+                              ? {
+                                  borderColor: "rgba(34, 211, 238, 0.82)",
+                                  boxShadow: "0 0 20px rgba(34, 211, 238, 0.2)",
+                                }
+                              : {
+                                  borderColor: "hsl(var(--border))",
+                                  boxShadow: "0 0 0px rgba(34, 211, 238, 0)",
+                                }
+                          }
+                          transition={{ duration: shouldReduceMotion ? 0 : 0.2 }}
+                          className="group relative flex items-center rounded-xl border border-slate-300 bg-white transition-colors hover:border-slate-400 dark:border-slate-800/95 dark:bg-[#070E1C]/90 dark:hover:border-slate-700"
+                        >
+                          <span
+                            className={cn(
+                              "pointer-events-none pl-3 transition-colors",
+                              focusedField === "confirmPassword"
+                                ? "text-sky-600 dark:text-cyan-300"
+                                : "text-slate-400"
+                            )}
+                          >
+                            <KeyRound className="size-4" />
+                          </span>
+                          <Input
+                            id="confirmPassword"
+                            type={showConfirm ? "text" : "password"}
+                            placeholder="Re-enter your password"
+                            autoComplete="new-password"
+                            value={confirmPassword}
+                            onFocus={() => setFocusedField("confirmPassword")}
+                            onBlur={() => setFocusedField((prev) => (prev === "confirmPassword" ? null : prev))}
+                            onChange={(e) => setConfirmPassword(e.target.value)}
+                            className="h-10 border-0 bg-transparent pl-2.5 pr-9 text-sm text-slate-900 placeholder:text-slate-400 focus-visible:ring-0 focus-visible:ring-offset-0 sm:h-9 dark:text-slate-100 dark:placeholder:text-slate-500"
+                          />
+                          <button
+                            type="button"
+                            aria-label={showConfirm ? "Hide password" : "Show password"}
+                            onClick={() => setShowConfirm((prev) => !prev)}
+                            className="absolute inset-y-0 right-1 my-auto grid size-8 place-items-center rounded-lg text-slate-500 transition-colors hover:bg-slate-100 hover:text-sky-700 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-cyan-400 dark:text-slate-400 dark:hover:bg-slate-800/80 dark:hover:text-cyan-200"
+                          >
+                            <AnimatePresence mode="wait" initial={false}>
+                              <motion.span
+                                key={showConfirm ? "eye-off-confirm" : "eye-on-confirm"}
+                                initial={shouldReduceMotion ? false : { opacity: 0, rotate: -25, scale: 0.72 }}
+                                animate={{ opacity: 1, rotate: 0, scale: 1 }}
+                                exit={shouldReduceMotion ? { opacity: 1 } : { opacity: 0, rotate: 25, scale: 0.72 }}
+                                transition={{ duration: shouldReduceMotion ? 0 : 0.15 }}
+                                className="inline-flex"
+                              >
+                                {showConfirm ? <EyeOff className="size-3.5" /> : <Eye className="size-3.5" />}
+                              </motion.span>
+                            </AnimatePresence>
+                          </button>
+                        </motion.div>
+                      </motion.div>
+                    )}
+
+                    {/* Animated Validation / Alerts */}
                     <AnimatePresence initial={false}>
                       {error && (
                         <motion.div
@@ -770,14 +929,10 @@ function AuthPage() {
                       )}
                     </AnimatePresence>
 
-                    {/* 3. INTERACTIVE SIGN IN BUTTON WITH HOVER LIFT & PRESS FEEDBACK */}
+                    {/* Submit Button */}
                     <motion.div
-                      whileHover={
-                        shouldReduceMotion || busy ? { y: 0, scale: 1 } : { y: -1.5, scale: 1.01 }
-                      }
-                      whileTap={
-                        shouldReduceMotion || busy ? { scale: 1 } : { scale: 0.985 }
-                      }
+                      whileHover={shouldReduceMotion || busy ? { y: 0, scale: 1 } : { y: -1.5, scale: 1.01 }}
+                      whileTap={shouldReduceMotion || busy ? { scale: 1 } : { scale: 0.985 }}
                       transition={{ duration: 0.16 }}
                     >
                       <Button
@@ -802,13 +957,24 @@ function AuthPage() {
                         )}
                       </Button>
                     </motion.div>
+
+                    {/* Back to sign in for forgot mode */}
+                    {mode === "forgot" && (
+                      <div className="pt-0.5 text-center">
+                        <button
+                          type="button"
+                          onClick={() => switchMode("signin")}
+                          className="rounded px-2 py-1 text-[11px] font-semibold text-slate-600 transition-colors hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200"
+                        >
+                          Back to Sign In
+                        </button>
+                      </div>
+                    )}
                   </motion.form>
                 </AnimatePresence>
               </motion.div>
 
-              {/* ============================================================= */}
-              {/* 4. REFINED VISUAL SEPARATOR ("YOUR SECURITY WORKSPACE")       */}
-              {/* ============================================================= */}
+              {/* Security separator */}
               <motion.div
                 initial={shouldReduceMotion ? false : { opacity: 0 }}
                 animate={{ opacity: 1 }}
@@ -825,9 +991,7 @@ function AuthPage() {
                 <div className="h-px flex-1 bg-gradient-to-l from-transparent via-slate-300 to-slate-300 dark:via-slate-700/80 dark:to-slate-800" />
               </motion.div>
 
-              {/* ============================================================= */}
-              {/* 5. STAGGERED 3-ITEM SECURITY INFORMATION PANEL                */}
-              {/* ============================================================= */}
+              {/* 3-item security panel */}
               <div className="divide-y divide-slate-200 rounded-2xl border border-slate-200 bg-white/75 px-2.5 py-1 backdrop-blur-sm dark:divide-slate-800/80 dark:border-slate-800/90 dark:bg-slate-950/55">
                 {SECURITY_INFO_ITEMS.map((item, idx) => {
                   const ItemIcon = item.icon;
@@ -836,7 +1000,7 @@ function AuthPage() {
                       key={item.title}
                       initial={shouldReduceMotion ? false : { opacity: 0, x: -8 }}
                       animate={{ opacity: 1, x: 0 }}
-                      whileHover={shouldReduceMotion ? { x: 0 } : { x: 3 }}
+                      whileHover={shouldReduceMotion ? { x: 3 } : { x: 0 }}
                       transition={{
                         duration: shouldReduceMotion ? 0 : 0.25,
                         delay: shouldReduceMotion ? 0 : 0.22 + idx * 0.06,
@@ -863,9 +1027,7 @@ function AuthPage() {
                 })}
               </div>
 
-              {/* ============================================================= */}
-              {/* 6. INTERACTIVE MODE SWITCH FOOTER & SECURE AUTH BADGE         */}
-              {/* ============================================================= */}
+              {/* Footer mode switch */}
               <motion.div
                 initial={shouldReduceMotion ? false : { opacity: 0, y: 6 }}
                 animate={{ opacity: 1, y: 0 }}
@@ -875,7 +1037,7 @@ function AuthPage() {
                 }}
                 className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-slate-50/80 px-3.5 py-2 text-xs dark:border-slate-800/80 dark:bg-slate-900/45"
               >
-                {mode === "signin" ? (
+                {mode === "signin" || mode === "forgot" ? (
                   <>
                     <span className="text-[11px] text-slate-600 dark:text-slate-400">
                       New to SCAMLENS AI?
@@ -910,7 +1072,7 @@ function AuthPage() {
                 )}
               </motion.div>
 
-              {/* Subtle Security Badge with Glowing Lock Icon + Home Indicator Bar */}
+              {/* Secure Authentication Badge */}
               <div className="mt-2.5 flex items-center justify-center">
                 <span className="inline-flex items-center gap-1.5 rounded-full border border-sky-300/60 bg-white/85 px-2.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-sky-700 shadow-[0_0_12px_rgba(14,165,233,0.1)] dark:border-cyan-500/20 dark:bg-slate-950/80 dark:text-cyan-300/85 dark:shadow-[0_0_12px_rgba(34,211,238,0.12)]">
                   <LockKeyhole className="size-2.5 text-sky-600 drop-shadow-[0_0_6px_rgba(34,211,238,0.75)] dark:text-cyan-400" />

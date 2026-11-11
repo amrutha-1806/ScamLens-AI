@@ -1,8 +1,9 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { Loader2 } from "lucide-react";
 import { ScamLensIcon } from "@/components/scamlens/logo";
 import { supabase } from "@/integrations/supabase/client";
+import { resolveSupabaseAuthCallback } from "@/lib/auth-error-helper";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -28,6 +29,14 @@ function ResetPasswordPage() {
   const [confirm, setConfirm] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    resolveSupabaseAuthCallback(supabase).then((res) => {
+      if (res.error) {
+        setError(res.error);
+      }
+    });
+  }, []);
 
   async function submit(e: FormEvent) {
     e.preventDefault(); setError(null);

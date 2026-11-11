@@ -7,16 +7,70 @@ import {
   HeadContent,
   Scripts,
 } from "@tanstack/react-router";
-import { useEffect, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 
 import appCss from "../styles.css?url";
 import { reportLovableError } from "../lib/lovable-error-reporting";
 import { supabase } from "@/integrations/supabase/client";
+import { resolveSupabaseAuthCallback } from "@/lib/auth-error-helper";
 import { useScamlensPreferences } from "@/lib/scamlens-preferences";
 
 const THEME_INIT_SCRIPT = `(function(){try{var r=document.documentElement;var raw=localStorage.getItem("scamlens_ui_preferences_v1");var mode="dark";if(raw){var p=JSON.parse(raw);if(p&& (p.themeMode==="light"||p.themeMode==="dark"||p.themeMode==="system"))mode=p.themeMode;}var res=mode==="system"?(window.matchMedia&&window.matchMedia("(prefers-color-scheme: light)").matches?"light":"dark"):mode;r.classList.toggle("dark",res==="dark");r.classList.toggle("light",res==="light");r.setAttribute("data-theme",res);r.style.colorScheme=res;}catch(e){document.documentElement.classList.add("dark");}})();`;
 
 function NotFoundComponent() {
+  const [isVerifyingAuth, setIsVerifyingAuth] = useState(false);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const hash = window.location.hash;
+    const search = window.location.search;
+    const pathname = window.location.pathname;
+
+    const hasAuthTokens =
+      hash.includes("access_token=") ||
+      hash.includes("token_hash=") ||
+      hash.includes("error=") ||
+      search.includes("code=") ||
+      search.includes("token_hash=") ||
+      search.includes("error=") ||
+      pathname.includes("/auth/callback") ||
+      pathname.includes("/auth/confirm") ||
+      pathname.includes("/callback") ||
+      pathname.includes("/confirm");
+
+    if (hasAuthTokens) {
+      setIsVerifyingAuth(true);
+      resolveSupabaseAuthCallback(supabase)
+        .then((res) => {
+          if (res.authenticated) {
+            window.location.replace(res.type === "recovery" ? "/reset-password" : "/");
+          } else if (res.error) {
+            window.location.replace("/auth");
+          } else {
+            supabase.auth.getSession().then(({ data }) => {
+              window.location.replace(data.session ? "/" : "/auth");
+            });
+          }
+        })
+        .catch(() => {
+          window.location.replace("/auth");
+        });
+    }
+  }, []);
+
+  if (isVerifyingAuth) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-background px-4">
+        <div className="flex flex-col items-center gap-3">
+          <div className="size-6 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+          <p className="text-sm font-medium text-foreground">
+            Confirming your account and redirecting to your workspace...
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="flex min-h-screen items-center justify-center bg-background px-4">
       <div className="max-w-md text-center">
@@ -105,7 +159,12 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
   shellComponent: RootShell,
   component: RootComponent,
   notFoundComponent: NotFoundComponent,
-  errorComponent: (props) => <ErrorComponent error={props.error instanceof Error ? props.error : new Error(String(props.error))} reset={props.reset} />,
+  errorComponent: (props) => (
+    <ErrorComponent
+      error={props.error instanceof Error ? props.error : new Error(String(props.error))}
+      reset={props.reset}
+    />
+  ),
 });
 
 function RootShell({ children }: { children: ReactNode }) {

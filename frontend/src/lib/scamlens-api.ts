@@ -202,7 +202,7 @@ export function resolveApiBaseUrl(raw: string | undefined): string | undefined {
   } catch {
     // If URL parsing threw, strictly extract valid protocol + hostname + optional port
     const match = cleaned.match(/^(https?:\/\/[a-zA-Z0-9.-]+(?::\d+)?)/i);
-    if (match) {
+    if (match?.[1]) {
       return match[1].replace(/\/+$/, "");
     }
     return undefined; // NEVER return an invalid or malformed URL string!
@@ -211,8 +211,8 @@ export function resolveApiBaseUrl(raw: string | undefined): string | undefined {
 
 // Resolve API base URL from client build environment (import.meta.env) or server/SSR (process.env)
 const rawApiBaseUrl: string | undefined = (
-  (typeof import.meta !== "undefined" && import.meta.env && (import.meta.env.VITE_API_BASE_URL ?? import.meta.env["VITE_API_BASE_URL"])) ||
-  (typeof process !== "undefined" && process.env && (process.env.VITE_API_BASE_URL ?? process.env.API_BASE_URL))
+  (typeof import.meta !== "undefined" && import.meta.env && import.meta.env["VITE_API_BASE_URL"]) ||
+  (typeof process !== "undefined" && process.env && (process.env["VITE_API_BASE_URL"] ?? process.env["API_BASE_URL"]))
 ) as string | undefined;
 
 const apiBaseUrl = resolveApiBaseUrl(rawApiBaseUrl);
@@ -223,8 +223,8 @@ const apiBaseUrl = resolveApiBaseUrl(rawApiBaseUrl);
  */
 export function getCleanBaseUrl(): string {
   const raw: string | undefined = (
-    (typeof import.meta !== "undefined" && import.meta.env && (import.meta.env.VITE_API_BASE_URL ?? import.meta.env["VITE_API_BASE_URL"])) ||
-    (typeof process !== "undefined" && process.env && (process.env.VITE_API_BASE_URL ?? process.env.API_BASE_URL)) ||
+    (typeof import.meta !== "undefined" && import.meta.env && import.meta.env["VITE_API_BASE_URL"]) ||
+    (typeof process !== "undefined" && process.env && (process.env["VITE_API_BASE_URL"] ?? process.env["API_BASE_URL"])) ||
     rawApiBaseUrl
   ) as string | undefined;
 
@@ -276,7 +276,7 @@ function mapResult(value: z.infer<typeof resultSchema>): AnalysisResult {
         if (typeof item === "string") return item;
         if (item && typeof item === "object") {
           const obj = item as Record<string, unknown>;
-          return String(obj.input ?? obj.normalized_url ?? obj.url ?? JSON.stringify(obj));
+          return String(obj["input"] ?? obj["normalized_url"] ?? obj["url"] ?? JSON.stringify(obj));
         }
         return String(item);
       })
@@ -333,6 +333,10 @@ function parseResult(data: unknown) {
   }
   return mapResult(parsed.data);
 }
+
+let inflightHealth: Promise<HealthStatus> | null = null;
+const inflightHistory = new Map<string, Promise<ScanRecord[]>>();
+let inflightModelInfo: Promise<ModelInfo> | null = null;
 
 export const scamlensApi = {
   get isConfigured(): boolean {
@@ -492,57 +496,80 @@ export const scamlensApi = {
     const userId = typeof userIdOrContext === "string" && userIdOrContext.trim().length > 0
       ? userIdOrContext.trim()
       : undefined;
-    const path = userId ? `/api/history?user_id=${encodeURIComponent(userId)}` : "/api/history";
-    const raw = await request(path);
-    // The backend returns { count, total, records, items }; plain arrays and
-    // { history } are also accepted so every documented container shape works.
-    const parsed = z.union([
-      z.array(historyItemSchema),
-      z.object({ records: z.array(historyItemSchema) }).passthrough(),
-      z.object({ items: z.array(historyItemSchema) }).passthrough(),
-      z.object({ history: z.array(historyItemSchema) }).passthrough(),
-    ]).safeParse(raw);
-    if (!parsed.success) {
-      console.warn("[scamlens] /api/history parse issues:", parsed.error.issues);
-      throw new ScamlensApiError("The backend response did not match the expected history format.");
-    }
-    const data = parsed.data as HistoryItem[] | { records?: HistoryItem[]; items?: HistoryItem[]; history?: HistoryItem[] };
-    const values = Array.isArray(data) ? data : data.records ?? data.items ?? data.history ?? [];
-    return values.map(mapHistoryRecord);
+    const cacheKey = userId ?? "__all__";
+    const existing = inflightHistory.get(cacheKey);
+    if (existing) return existing;
+
+    const promise = (async () => {
+      const path = userId ? `/api/history?user_id=${encodeURIComponent(userId)}` : "/api/history";
+      const raw = await request(path);
+      // The backend returns { count, total, records, items }; plain arrays and
+      // { history } are also accepted so every documented container shape works.
+      const parsed = z.union([
+        z.array(historyItemSchema),
+        z.object({ records: z.array(historyItemSchema) }).passthrough(),
+        z.object({ items: z.array(historyItemSchema) }).passthrough(),
+        z.object({ history: z.array(historyItemSchema) }).passthrough(),
+      ]).safeParse(raw);
+      if (!parsed.success) {
+        console.warn("[scamlens] /api/history parse issues:", parsed.error.issues);
+        throw new ScamlensApiError("The backend response did not match the expected history format.");
+      }
+      const data = parsed.data as HistoryItem[] | { records?: HistoryItem[]; items?: HistoryItem[]; history?: HistoryItem[] };
+      const values = Array.isArray(data) ? data : data.records ?? data.items ?? data.history ?? [];
+      return values.map(mapHistoryRecord);
+    })().finally(() => {
+      inflightHistory.delete(cacheKey);
+    });
+
+    inflightHistory.set(cacheKey, promise);
+    return promise;
   },
 
   getHealth: async (): Promise<HealthStatus> => {
-    const parsed = healthSchema.safeParse(await request("/api/health"));
-    if (!parsed.success) throw new ScamlensApiError("Backend unavailable");
-    const normalized = parsed.data.status.toLowerCase();
-    return { status: parsed.data.status, healthy: parsed.data.healthy ?? ["ok", "healthy", "ready", "connected"].includes(normalized) };
+    if (inflightHealth) return inflightHealth;
+    inflightHealth = (async () => {
+      const parsed = healthSchema.safeParse(await request("/api/health"));
+      if (!parsed.success) throw new ScamlensApiError("Backend unavailable");
+      const normalized = parsed.data.status.toLowerCase();
+      return { status: parsed.data.status, healthy: parsed.data.healthy ?? ["ok", "healthy", "ready", "connected"].includes(normalized) };
+    })().finally(() => {
+      inflightHealth = null;
+    });
+    return inflightHealth;
   },
   getModelInfo: async (): Promise<ModelInfo> => {
-    const raw = await request("/api/model-info");
-    const parsed = modelInfoSchema.safeParse(raw);
-    if (!parsed.success) {
-      // Log the Zod issues to help diagnose future backend changes.
-      console.warn("[scamlens] /api/model-info parse issues:", parsed.error.issues);
-      throw new ScamlensApiError("The backend response did not match the expected model information format.");
-    }
-    const d = parsed.data;
-    return {
-      // Prefer model_name (actual backend field) then fall back to model.
-      model: d.model_name ?? d.model,
-      dataset: d.dataset,
-      datasetSize: d.dataset_size ?? (d.metrics?.["total_samples"] ? Number(d.metrics["total_samples"]) : undefined),
-      classes: d.classes,
-      // feature_extraction is a single string; split on " + " for individual line display.
-      featureExtraction: d.feature_extraction,
-      features: d.features ?? (d.feature_extraction
-        ? d.feature_extraction.split(" + ").map((s: string) => s.trim())
-        : undefined),
-      candidateModels: d.candidate_models,
-      supportedAnalysisTypes: d.supported_analysis_types,
-      metrics: d.metrics,
-      confusionMatrix: d.confusion_matrix,
-      version: d.version,
-    };
+    if (inflightModelInfo) return inflightModelInfo;
+    inflightModelInfo = (async () => {
+      const raw = await request("/api/model-info");
+      const parsed = modelInfoSchema.safeParse(raw);
+      if (!parsed.success) {
+        // Log the Zod issues to help diagnose future backend changes.
+        console.warn("[scamlens] /api/model-info parse issues:", parsed.error.issues);
+        throw new ScamlensApiError("The backend response did not match the expected model information format.");
+      }
+      const d = parsed.data;
+      return {
+        // Prefer model_name (actual backend field) then fall back to model.
+        model: d.model_name ?? d.model,
+        dataset: d.dataset,
+        datasetSize: d.dataset_size ?? (d.metrics?.["total_samples"] ? Number(d.metrics["total_samples"]) : undefined),
+        classes: d.classes,
+        // feature_extraction is a single string; split on " + " for individual line display.
+        featureExtraction: d.feature_extraction,
+        features: d.features ?? (d.feature_extraction
+          ? d.feature_extraction.split(" + ").map((s: string) => s.trim())
+          : undefined),
+        candidateModels: d.candidate_models,
+        supportedAnalysisTypes: d.supported_analysis_types,
+        metrics: d.metrics,
+        confusionMatrix: d.confusion_matrix,
+        version: d.version,
+      };
+    })().finally(() => {
+      inflightModelInfo = null;
+    });
+    return inflightModelInfo;
   },
 };
 // ---- Read-only API diagnostics (real browser requests to the configured origin only) ----

@@ -330,7 +330,7 @@ function AnalysisResultView({ result }: { result: AnalysisResult }) {
 }
 
 function HistoryStatus({ loading, error, empty }: { loading: boolean; error: Error | null; empty?: boolean }) {
-  if (loading) return <ApiNotice kind="loading" message="Loading records from the Python backend." />;
+  if (loading) return <ApiNotice kind="loading" message="Waking up backend… Dashboard is ready while scan history loads." />;
   if (error) return <ApiNotice kind="error" message={apiError(error)} />;
   if (empty) return <EmptyState compact title="No scans recorded" description="The backend returned no completed scans." />;
   return null;
@@ -411,11 +411,16 @@ export function DashboardPage() {
   const history = useQuery(historyQueryOptions());
 
   const connected = health.isSuccess && health.data.healthy;
+  const wakingUp = !connected && (health.isPending || (health.isFetching && !health.isError));
   const records = history.data ?? [];
   const scam = records.filter((r) => r.prediction === "Scam/Phishing").length;
   const legitimate = records.filter((r) => r.prediction === "Legitimate").length;
   const high = records.filter((r) => r.riskLevel === "High" || r.riskLevel === "Very High").length;
-  const note = history.isSuccess ? "From backend history" : history.isError ? "History unavailable" : "Awaiting backend data";
+  const note = history.isSuccess
+    ? "From backend history"
+    : history.isError
+      ? "Backend unavailable"
+      : "Waking up backend…";
 
   return (
     <div className="space-y-7">
@@ -438,11 +443,20 @@ export function DashboardPage() {
             <span
               className={cn(
                 "inline-flex min-h-10 w-full items-center justify-center gap-2 rounded-lg border px-3 py-2 text-xs font-medium sm:w-auto",
-                connected ? "border-safe/30 bg-safe/10 text-safe" : "border-warning/30 bg-warning/10 text-warning"
+                connected
+                  ? "border-safe/30 bg-safe/10 text-safe"
+                  : wakingUp
+                    ? "border-primary/30 bg-primary/10 text-primary"
+                    : "border-warning/30 bg-warning/10 text-warning"
               )}
             >
-              <span className={cn("size-2 rounded-full", connected ? "bg-safe animate-pulse" : "bg-warning")} />
-              {health.isLoading ? "Checking backend..." : connected ? "Connected" : "Backend Unavailable"}
+              <span
+                className={cn(
+                  "size-2 rounded-full",
+                  connected ? "bg-safe animate-pulse" : wakingUp ? "bg-primary animate-pulse" : "bg-warning"
+                )}
+              />
+              {wakingUp ? "Waking up backend…" : connected ? "Connected" : "Backend unavailable"}
             </span>
           </div>
         }

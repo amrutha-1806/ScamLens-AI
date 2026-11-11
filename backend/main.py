@@ -43,10 +43,11 @@ from backend.schemas import (
     ScanRecord,
     UrlRequest,
 )
-from backend.services.ml_service import analyze
+from contextlib import asynccontextmanager
+from backend.services.ml_service import analyze, _get_predictor
 from backend.services.url_intelligence import analyze_url_static, calculate_url_risk_verdict
 from backend.services.email_service import analyze_email_phishing
-from src.utils.database import log_scan_result
+from src.utils.database import log_scan_result, init_db
 from src.utils.logger import get_logger
 
 logger = get_logger("API")
@@ -62,6 +63,18 @@ from backend.services.report_service import (
     generate_incident_report_pdf,
 )
 
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    """Preload SQLite schema and Random Forest ML model once on server startup."""
+    try:
+        init_db()
+        _get_predictor()
+    except Exception as exc:
+        logger.warning(f"Startup preload warning: {exc}")
+    yield
+
+
 # ---------------------------------------------------------------------------
 # App init
 # ---------------------------------------------------------------------------
@@ -74,6 +87,7 @@ app = FastAPI(
         "they are never opened, fetched, or visited."
     ),
     version="1.1.0",
+    lifespan=lifespan,
 )
 
 # ---------------------------------------------------------------------------
