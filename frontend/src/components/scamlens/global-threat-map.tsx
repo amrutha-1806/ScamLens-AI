@@ -1,32 +1,50 @@
-import { useMemo, useState } from "react";
+import React, { useMemo, useState, useRef, useEffect, useCallback, Component, type ReactNode } from "react";
 import { Link } from "@tanstack/react-router";
 import {
   Activity,
   AlertTriangle,
   ArrowUpRight,
   Globe2,
+  Info,
   Link2,
   Mail,
+  Maximize2,
   MessageSquareText,
+  Minus,
   Pause,
   Play,
+  Plus,
   Radar,
+  RotateCcw,
   ShieldAlert,
+  ShieldCheck,
+  X,
+  Layers,
 } from "lucide-react";
-import { motion } from "motion/react";
+import { motion, AnimatePresence } from "motion/react";
 import { Button } from "@/components/ui/button";
 import { useScamlensPreferences } from "@/lib/scamlens-preferences";
 import type { RiskLevel, ScanRecord } from "@/lib/scamlens-types";
 import { cn } from "@/lib/utils";
 import { Panel } from "./primitives";
+import worldGeoData from "./world-geo-data.json";
 
 type VectorFilter = "all" | "url" | "message" | "email";
+
+export interface GeoCountry {
+  id: string;
+  name: string;
+  d: string;
+  cx: number;
+  cy: number;
+  bounds: [[number, number], [number, number]] | null;
+}
 
 interface ThreatRegionHub {
   id: string;
   name: string;
   shortCode: string;
-  /** SVG viewBox (0..1000 x 0..500) coordinates */
+  /** Actual projected coordinates in 960x500 Equal Earth space */
   x: number;
   y: number;
   baseRisk: RiskLevel;
@@ -51,28 +69,29 @@ interface ThreatCorridor {
   label: string;
 }
 
+// Projected coordinates on Equal Earth (960 x 500)
 const THREAT_HUBS: ThreatRegionHub[] = [
   {
     id: "na",
     name: "North America",
     shortCode: "NA-EAST",
-    x: 225,
-    y: 175,
+    x: 306,
+    y: 110,
     baseRisk: "High",
     baseThreatScore: 78,
     dominantVector: "url",
     primaryVectorsLabel: "Brand Credential Phishing & Toll SMS Lures",
     targetedSectors: ["Cloud SaaS", "Retail Banking", "Parcel Logistics"],
     topIndicators: ["Lookalike login domains (.xyz, .top)", "Urgent 2FA reset links", "Toll-road SMS payment lures"],
-    tldKeywords: [".us", ".ca", ".com", "usps", "fedex", "irs", " chase", "wellsfargo", "toll"],
+    tldKeywords: [".us", ".ca", ".com", "usps", "fedex", "irs", "chase", "wellsfargo", "toll"],
     sampleAction: { to: "/url-analyzer", label: "Inspect URL Vector" },
   },
   {
     id: "latam",
     name: "Latin America",
     shortCode: "LATAM",
-    x: 315,
-    y: 350,
+    x: 361,
+    y: 333,
     baseRisk: "Suspicious",
     baseThreatScore: 62,
     dominantVector: "message",
@@ -86,8 +105,8 @@ const THREAT_HUBS: ThreatRegionHub[] = [
     id: "eu",
     name: "Europe & UK",
     shortCode: "EU-WEST",
-    x: 495,
-    y: 145,
+    x: 480,
+    y: 79,
     baseRisk: "High",
     baseThreatScore: 74,
     dominantVector: "email",
@@ -101,8 +120,8 @@ const THREAT_HUBS: ThreatRegionHub[] = [
     id: "mea",
     name: "Middle East & Africa",
     shortCode: "MEA",
-    x: 545,
-    y: 265,
+    x: 621,
+    y: 161,
     baseRisk: "High",
     baseThreatScore: 71,
     dominantVector: "email",
@@ -116,8 +135,8 @@ const THREAT_HUBS: ThreatRegionHub[] = [
     id: "sa",
     name: "South Asia",
     shortCode: "APAC-IN",
-    x: 690,
-    y: 235,
+    x: 674,
+    y: 150,
     baseRisk: "Very High",
     baseThreatScore: 88,
     dominantVector: "message",
@@ -131,8 +150,8 @@ const THREAT_HUBS: ThreatRegionHub[] = [
     id: "sea",
     name: "Southeast Asia",
     shortCode: "ASEAN",
-    x: 768,
-    y: 280,
+    x: 757,
+    y: 245,
     baseRisk: "Very High",
     baseThreatScore: 84,
     dominantVector: "url",
@@ -146,8 +165,8 @@ const THREAT_HUBS: ThreatRegionHub[] = [
     id: "ea",
     name: "East Asia",
     shortCode: "APAC-EA",
-    x: 815,
-    y: 185,
+    x: 819,
+    y: 126,
     baseRisk: "High",
     baseThreatScore: 76,
     dominantVector: "url",
@@ -161,8 +180,8 @@ const THREAT_HUBS: ThreatRegionHub[] = [
     id: "oc",
     name: "Oceania",
     shortCode: "ANZ",
-    x: 845,
-    y: 385,
+    x: 850,
+    y: 368,
     baseRisk: "Suspicious",
     baseThreatScore: 59,
     dominantVector: "message",
@@ -184,29 +203,6 @@ const THREAT_CORRIDORS: ThreatCorridor[] = [
   { id: "c7", fromId: "eu", toId: "na", vector: "email", risk: "High", label: "SaaS OAuth Token Phishing" },
   { id: "c8", fromId: "sea", toId: "ea", vector: "url", risk: "Very High", label: "Crypto Drainer Kits" },
 ];
-
-/** Stylized, lightweight SVG continent paths in a 1000x500 equirectangular projection */
-const WORLD_LANDMASS_PATHS = [
-  // North America
-  "M 75 85 L 185 70 L 295 85 L 320 135 L 275 195 L 245 235 L 210 250 L 175 225 L 130 175 L 85 130 Z",
-  // Greenland
-  "M 325 52 L 395 45 L 410 85 L 355 102 L 320 82 Z",
-  // South America
-  "M 255 265 L 330 275 L 368 330 L 345 415 L 302 455 L 278 410 L 252 330 Z",
-  // Europe
-  "M 442 88 L 535 72 L 585 102 L 572 158 L 525 175 L 462 172 L 438 135 Z",
-  // Africa
-  "M 445 192 L 545 188 L 605 235 L 592 325 L 555 405 L 505 412 L 478 345 L 438 265 Z",
-  // Mainland Asia & Middle East
-  "M 588 85 L 745 68 L 895 92 L 915 162 L 855 235 L 795 278 L 735 262 L 685 278 L 632 238 L 585 195 L 575 132 Z",
-  // Southeast Asia & Archipelago
-  "M 748 285 L 832 282 L 862 328 L 785 338 L 742 315 Z",
-  // Japan
-  "M 862 155 L 882 165 L 874 205 L 854 195 Z",
-  // Australia & New Zealand
-  "M 778 355 L 878 350 L 902 405 L 858 438 L 785 425 L 768 388 Z",
-  "M 918 425 L 940 435 L 930 462 L 910 452 Z",
-] as const;
 
 function riskColorClasses(risk: RiskLevel) {
   switch (risk) {
@@ -243,59 +239,161 @@ function buildCurvedPath(x1: number, y1: number, x2: number, y2: number): string
   const dx = x2 - x1;
   const dy = y2 - y1;
   const dist = Math.hypot(dx, dy);
-  const arcLift = Math.min(95, Math.max(32, dist * 0.22));
+  const arcLift = Math.min(85, Math.max(28, dist * 0.2));
   const cx = mx;
-  const cy = Math.max(28, my - arcLift);
+  const cy = Math.max(20, my - arcLift);
   return `M ${x1} ${y1} Q ${cx} ${cy} ${x2} ${y2}`;
 }
 
-export function GlobalThreatMap({ records }: { records: ScanRecord[] }) {
+interface MapErrorBoundaryProps {
+  children: ReactNode;
+}
+
+interface MapErrorBoundaryState {
+  hasError: boolean;
+  error: Error | null;
+}
+
+export class MapErrorBoundary extends Component<MapErrorBoundaryProps, MapErrorBoundaryState> {
+  constructor(props: MapErrorBoundaryProps) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error: Error): MapErrorBoundaryState {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
+    console.error("GlobalThreatMap caught error:", error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <Panel
+          title="Global Scam Threat Map"
+          description="Geographical threat intelligence visualization."
+        >
+          <div className="flex flex-col items-center justify-center rounded-xl border border-border bg-secondary/20 p-8 text-center">
+            <Globe2 className="size-10 text-cyan-400 mb-3" />
+            <h3 className="text-base font-bold text-foreground">Interactive Map Initializing</h3>
+            <p className="mt-1 max-w-md text-xs text-muted-foreground">
+              Unable to render world map view in this environment. All workspace scan analysis and security tools remain fully operational.
+            </p>
+            <Button
+              variant="outline"
+              size="sm"
+              className="mt-4 text-xs"
+              onClick={() => this.setState({ hasError: false, error: null })}
+            >
+              Retry Map View
+            </Button>
+          </div>
+        </Panel>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+function GlobalThreatMapInner({ records = [] }: { records?: ScanRecord[] }) {
   const { shouldReduceMotion } = useScamlensPreferences();
-  const [selectedHubId, setSelectedHubId] = useState<string>("sa");
+
   const [vectorFilter, setVectorFilter] = useState<VectorFilter>("all");
   const [highRiskOnly, setHighRiskOnly] = useState<boolean>(false);
   const [liveFeedPaused, setLiveFeedPaused] = useState<boolean>(false);
+  const [selectedHubId, setSelectedHubId] = useState<string>("sa");
+  const [selectedCountry, setSelectedCountry] = useState<GeoCountry | null>(null);
+  const [hoveredCountry, setHoveredCountry] = useState<GeoCountry | null>(null);
+  const [tooltipPos, setTooltipPos] = useState<{ x: number; y: number } | null>(null);
+
+  // Zoom and Pan State
+  const [zoom, setZoom] = useState<number>(1);
+  const [pan, setPan] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  const [isPanning, setIsPanning] = useState<boolean>(false);
+  const dragStartRef = useRef<{ x: number; y: number; panX: number; panY: number } | null>(null);
+  const svgContainerRef = useRef<HTMLDivElement | null>(null);
 
   const animateMap = !shouldReduceMotion && !liveFeedPaused;
 
-  // Correlate real workspace scan history with regional hubs when records are present
-  const enrichedHubs = useMemo(() => {
-    const scamRecords = records.filter((r) => r.prediction === "Scam/Phishing");
+  // Zoom handlers
+  const handleZoomIn = () => setZoom((z) => Math.min(4, +(z + 0.4).toFixed(1)));
+  const handleZoomOut = () => setZoom((z) => Math.max(1, +(z - 0.4).toFixed(1)));
+  const handleResetView = () => {
+    setZoom(1);
+    setPan({ x: 0, y: 0 });
+    setSelectedCountry(null);
+  };
 
-    return THREAT_HUBS.map((hub, idx) => {
+  // Mouse pan handling
+  const handleMouseDown = (e: React.MouseEvent) => {
+    if (e.button !== 0) return; // Only primary click
+    setIsPanning(true);
+    dragStartRef.current = {
+      x: e.clientX,
+      y: e.clientY,
+      panX: pan.x,
+      panY: pan.y,
+    };
+  };
+
+  const handleMouseMove = (e: React.MouseEvent) => {
+    if (isPanning && dragStartRef.current) {
+      const dx = (e.clientX - dragStartRef.current.x) / zoom;
+      const dy = (e.clientY - dragStartRef.current.y) / zoom;
+      setPan({
+        x: Math.max(-400, Math.min(400, dragStartRef.current.panX + dx)),
+        y: Math.max(-250, Math.min(250, dragStartRef.current.panY + dy)),
+      });
+    }
+
+    // Update tooltip position relative to container
+    if (svgContainerRef.current) {
+      const rect = svgContainerRef.current.getBoundingClientRect();
+      setTooltipPos({
+        x: e.clientX - rect.left,
+        y: e.clientY - rect.top,
+      });
+    }
+  };
+
+  const handleMouseUp = () => {
+    setIsPanning(false);
+    dragStartRef.current = null;
+  };
+
+  // Enriched workspace telemetry correlation
+  const enrichedHubs = useMemo(() => {
+    const scamRecords = records.filter(
+      (r) => r.prediction_label === "Scam/Phishing" || r.prediction === "Scam/Phishing"
+    );
+
+    return THREAT_HUBS.map((hub) => {
       let matchedCount = 0;
       for (const rec of scamRecords) {
-        if (vectorFilter !== "all" && rec.inputType !== vectorFilter) continue;
-        const previewLower = rec.inputPreview.toLowerCase();
-        const matchesKeyword = hub.tldKeywords.some((kw) => previewLower.includes(kw));
-        const matchesVectorFallback =
-          !matchesKeyword &&
-          rec.inputType === hub.dominantVector &&
-          Number(String(rec.id).replace(/\D/g, "") || idx) % THREAT_HUBS.length === idx;
-
-        if (matchesKeyword || matchesVectorFallback) {
-          matchedCount += 1;
-        }
+        const text = ((rec.content || "") + " " + (rec.explanation_summary || "")).toLowerCase();
+        const hit = hub.tldKeywords.some((kw) => text.includes(kw));
+        if (hit) matchedCount++;
       }
 
-      const boostedScore = Math.min(99, hub.baseThreatScore + matchedCount * 3);
-      const effectiveRisk: RiskLevel =
-        boostedScore >= 82
-          ? "Very High"
-          : boostedScore >= 70
-            ? "High"
-            : boostedScore >= 45
-              ? "Suspicious"
-              : hub.baseRisk;
+      const scoreBonus = Math.min(12, matchedCount * 3);
+      const effectiveScore = Math.min(99, hub.baseThreatScore + scoreBonus);
+
+      let effectiveRisk: RiskLevel = hub.baseRisk;
+      if (effectiveScore >= 85) effectiveRisk = "Very High";
+      else if (effectiveScore >= 70) effectiveRisk = "High";
+      else if (effectiveScore >= 50) effectiveRisk = "Suspicious";
+      else effectiveRisk = "Low";
 
       return {
         ...hub,
         matchedCount,
-        effectiveScore: boostedScore,
+        effectiveScore,
         effectiveRisk,
       };
     });
-  }, [records, vectorFilter]);
+  }, [records]);
 
   const visibleHubs = useMemo(() => {
     return enrichedHubs.filter((hub) => {
@@ -333,14 +431,26 @@ export function GlobalThreatMap({ records }: { records: ScanRecord[] }) {
   }, [enrichedHubs]);
 
   const totalWorkspaceScams = useMemo(
-    () => records.filter((r) => r.prediction === "Scam/Phishing").length,
+    () => records.filter((r) => r.prediction_label === "Scam/Phishing" || r.prediction === "Scam/Phishing").length,
     [records]
   );
+
+  // Filter country hits from workspace scans
+  const countryWorkspaceMatches = useMemo(() => {
+    if (!selectedCountry) return [];
+    const nameLower = selectedCountry.name.toLowerCase();
+    return records.filter((rec) => {
+      const text = ((rec.content || "") + " " + (rec.explanation_summary || "")).toLowerCase();
+      return text.includes(nameLower);
+    });
+  }, [selectedCountry, records]);
+
+  const countries = worldGeoData.countries as GeoCountry[];
 
   return (
     <Panel
       title="Global Scam Threat Map"
-      description="Interactive telemetry of global phishing corridors, regional scam vectors, and workspace threat correlation."
+      description="Geographically accurate world telemetry of phishing vectors, regional telemetry nodes, and workspace threat correlation."
       delay={0.06}
       action={
         <div className="flex flex-wrap items-center gap-1.5">
@@ -361,7 +471,7 @@ export function GlobalThreatMap({ records }: { records: ScanRecord[] }) {
                 onClick={() => setVectorFilter(item.id)}
                 aria-pressed={active}
                 className={cn(
-                  "inline-flex min-h-8 items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-medium transition-colors",
+                  "inline-flex min-h-8 items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-medium transition-colors cursor-pointer",
                   active
                     ? "border-primary/40 bg-primary/15 text-primary"
                     : "border-border bg-secondary/35 text-muted-foreground hover:border-primary/25 hover:text-foreground"
@@ -378,7 +488,7 @@ export function GlobalThreatMap({ records }: { records: ScanRecord[] }) {
             onClick={() => setHighRiskOnly((prev) => !prev)}
             aria-pressed={highRiskOnly}
             className={cn(
-              "inline-flex min-h-8 items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-medium transition-colors",
+              "inline-flex min-h-8 items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-medium transition-colors cursor-pointer",
               highRiskOnly
                 ? "border-danger/40 bg-danger/15 text-danger"
                 : "border-border bg-secondary/35 text-muted-foreground hover:border-danger/30 hover:text-foreground"
@@ -394,7 +504,7 @@ export function GlobalThreatMap({ records }: { records: ScanRecord[] }) {
               onClick={() => setLiveFeedPaused((prev) => !prev)}
               aria-pressed={liveFeedPaused}
               title={liveFeedPaused ? "Resume map telemetry animation" : "Pause map telemetry animation"}
-              className="inline-flex min-h-8 items-center gap-1.5 rounded-lg border border-border bg-secondary/35 px-2.5 py-1 text-xs font-medium text-muted-foreground transition-colors hover:border-primary/25 hover:text-foreground"
+              className="inline-flex min-h-8 items-center gap-1.5 rounded-lg border border-border bg-secondary/35 px-2.5 py-1 text-xs font-medium text-muted-foreground transition-colors hover:border-primary/25 hover:text-foreground cursor-pointer"
             >
               {liveFeedPaused ? <Play className="size-3.5 text-primary" /> : <Pause className="size-3.5 text-primary" />}
               <span>{liveFeedPaused ? "Paused" : "Live"}</span>
@@ -404,16 +514,16 @@ export function GlobalThreatMap({ records }: { records: ScanRecord[] }) {
       }
     >
       <div className="grid gap-5 xl:grid-cols-[1.55fr_1fr]">
-        {/* Left: Interactive World Threat Map Canvas */}
+        {/* Left: Interactive Real World Threat Map Canvas */}
         <div className="flex flex-col justify-between rounded-xl border border-border bg-secondary/20 p-3 sm:p-4">
           <div className="mb-3 flex flex-wrap items-center justify-between gap-2 text-xs">
             <div className="flex items-center gap-2">
               <span className="inline-flex items-center gap-1.5 rounded-md border border-primary/25 bg-primary/10 px-2 py-0.5 font-mono text-[11px] font-semibold text-primary">
-                <Radar className={cn("size-3.5", animateMap && "animate-spin")} style={{ animationDuration: "6s" }} />
-                THREAT RADAR
+                <Radar className={cn("size-3.5", animateMap && "animate-spin")} style={{ animationDuration: "8s" }} />
+                REAL WORLD MAP
               </span>
-              <span className="text-muted-foreground">
-                Select any regional node to inspect active scam vectors and indicators
+              <span className="text-muted-foreground hidden sm:inline">
+                Hover or click any country for geography • Drag to pan • Scroll/buttons to zoom
               </span>
             </div>
             <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
@@ -429,185 +539,296 @@ export function GlobalThreatMap({ records }: { records: ScanRecord[] }) {
             </div>
           </div>
 
-          <div className="relative aspect-[2/1] w-full overflow-hidden rounded-lg border border-border/80 bg-slate-950/90 shadow-inner">
+          {/* Map Viewport Container */}
+          <div
+            ref={svgContainerRef}
+            className={cn(
+              "relative aspect-[16/9] sm:aspect-[2/1] w-full overflow-hidden rounded-lg border border-border/80 bg-[#030712] shadow-inner select-none",
+              isPanning ? "cursor-grabbing" : "cursor-grab"
+            )}
+            onMouseDown={handleMouseDown}
+            onMouseMove={handleMouseMove}
+            onMouseUp={handleMouseUp}
+            onMouseLeave={handleMouseUp}
+          >
+            {/* Interactive SVG Render */}
             <svg
-              viewBox="0 0 1000 500"
-              className="h-full w-full select-none"
+              viewBox="0 0 960 500"
+              className="h-full w-full pointer-events-auto"
               role="img"
-              aria-label="Global Scam Threat Map showing regional phishing and scam telemetry hubs"
+              aria-label="Real Geographical World Map with Natural Earth Country Boundaries and Threat Intelligence Hubs"
             >
               <defs>
-                <pattern id="scamlens-map-grid" width="50" height="50" patternUnits="userSpaceOnUse">
+                {/* Cyber Grid Pattern */}
+                <pattern id="scamlens-real-grid" width="40" height="40" patternUnits="userSpaceOnUse">
                   <path
-                    d="M 50 0 L 0 0 0 50"
+                    d="M 40 0 L 0 0 0 40"
                     fill="none"
-                    stroke="rgba(56, 189, 248, 0.08)"
-                    strokeWidth="1"
+                    stroke="rgba(56, 189, 248, 0.05)"
+                    strokeWidth="0.8"
                   />
                 </pattern>
-                <radialGradient id="scamlens-map-glow" cx="50%" cy="50%" r="60%">
-                  <stop offset="0%" stopColor="rgba(14, 165, 233, 0.14)" />
-                  <stop offset="100%" stopColor="rgba(2, 6, 23, 0)" />
+                {/* Deep Cyber Radial Glow */}
+                <radialGradient id="scamlens-ocean-glow" cx="50%" cy="50%" r="65%">
+                  <stop offset="0%" stopColor="rgba(14, 165, 233, 0.08)" />
+                  <stop offset="70%" stopColor="rgba(2, 6, 23, 0.95)" />
+                  <stop offset="100%" stopColor="rgba(1, 4, 14, 1)" />
                 </radialGradient>
               </defs>
 
-              {/* Cyber Grid & Equator / Tropics Reference Lines */}
-              <rect width="1000" height="500" fill="url(#scamlens-map-grid)" />
-              <rect width="1000" height="500" fill="url(#scamlens-map-glow)" />
-              <line x1="0" y1="250" x2="1000" y2="250" stroke="rgba(56, 189, 248, 0.14)" strokeDasharray="6 6" />
-              <line x1="0" y1="145" x2="1000" y2="145" stroke="rgba(56, 189, 248, 0.07)" strokeDasharray="4 8" />
-              <line x1="0" y1="355" x2="1000" y2="355" stroke="rgba(56, 189, 248, 0.07)" strokeDasharray="4 8" />
+              {/* Ocean Background & Coordinate Grid */}
+              <rect width="960" height="500" fill="url(#scamlens-ocean-glow)" />
+              <rect width="960" height="500" fill="url(#scamlens-real-grid)" />
 
-              {/* Stylized Continents */}
-              <g>
-                {WORLD_LANDMASS_PATHS.map((d, i) => (
-                  <path
-                    key={i}
-                    d={d}
-                    fill="rgba(30, 41, 59, 0.72)"
-                    stroke="rgba(56, 189, 248, 0.24)"
-                    strokeWidth="1.25"
-                    strokeLinejoin="round"
-                  />
-                ))}
-              </g>
+              {/* Transform group for Pan and Zoom */}
+              <g
+                transform={`translate(${pan.x * zoom + (1 - zoom) * 480}, ${
+                  pan.y * zoom + (1 - zoom) * 250
+                }) scale(${zoom})`}
+                style={{ transformOrigin: "480px 250px", transition: isPanning ? "none" : "transform 0.15s ease-out" }}
+              >
+                {/* Global Sphere Boundary */}
+                <path
+                  d={worldGeoData.spherePath}
+                  fill="none"
+                  stroke="rgba(56, 189, 248, 0.15)"
+                  strokeWidth="1.2"
+                />
 
-              {/* Threat Attack Corridors */}
-              <g>
-                {visibleCorridors.map((corridor) => {
-                  const fromHub = hubMap.get(corridor.fromId);
-                  const toHub = hubMap.get(corridor.toId);
-                  if (!fromHub || !toHub) return null;
-                  const pathD = buildCurvedPath(fromHub.x, fromHub.y, toHub.x, toHub.y);
-                  const isHighlighted =
-                    activeHub.id === corridor.fromId || activeHub.id === corridor.toId;
-                  const colors = riskColorClasses(corridor.risk);
+                {/* Natural Earth 10° Graticule Network */}
+                <path
+                  d={worldGeoData.graticulePath}
+                  fill="none"
+                  stroke="rgba(56, 189, 248, 0.04)"
+                  strokeWidth="0.6"
+                  strokeDasharray="2 3"
+                />
 
-                  return (
-                    <g key={corridor.id}>
+                {/* Real Natural Earth Country Outlines */}
+                <g id="world-countries-layer">
+                  {countries.map((country) => {
+                    const isSelected = selectedCountry?.id === country.id;
+                    const isHovered = hoveredCountry?.id === country.id;
+
+                    return (
                       <path
-                        d={pathD}
-                        fill="none"
-                        stroke={colors.dot}
-                        strokeOpacity={isHighlighted ? 0.55 : 0.22}
-                        strokeWidth={isHighlighted ? 2.2 : 1.25}
-                        strokeDasharray="5 5"
+                        key={country.id}
+                        d={country.d}
+                        fill={
+                          isSelected
+                            ? "rgba(6, 182, 212, 0.35)"
+                            : isHovered
+                            ? "rgba(14, 165, 233, 0.28)"
+                            : "rgba(15, 23, 42, 0.85)"
+                        }
+                        stroke={
+                          isSelected
+                            ? "#22d3ee"
+                            : isHovered
+                            ? "#38bdf8"
+                            : "rgba(56, 189, 248, 0.22)"
+                        }
+                        strokeWidth={isSelected ? 1.6 / zoom : isHovered ? 1.2 / zoom : 0.6 / zoom}
+                        strokeLinejoin="round"
+                        className="transition-colors duration-150 cursor-pointer outline-none"
+                        onMouseEnter={() => setHoveredCountry(country)}
+                        onMouseLeave={() => setHoveredCountry(null)}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setSelectedCountry(country);
+                        }}
                       />
-                      {animateMap && (
-                        <motion.path
+                    );
+                  })}
+                </g>
+
+                {/* Threat Attack Corridors (Curved Geodesic Bezier Paths) */}
+                <g id="corridors-layer">
+                  {visibleCorridors.map((corridor) => {
+                    const fromHub = hubMap.get(corridor.fromId);
+                    const toHub = hubMap.get(corridor.toId);
+                    if (!fromHub || !toHub) return null;
+                    const pathD = buildCurvedPath(fromHub.x, fromHub.y, toHub.x, toHub.y);
+                    const isHighlighted =
+                      activeHub.id === corridor.fromId || activeHub.id === corridor.toId;
+                    const colors = riskColorClasses(corridor.risk);
+
+                    return (
+                      <g key={corridor.id}>
+                        <path
                           d={pathD}
                           fill="none"
                           stroke={colors.dot}
-                          strokeWidth={isHighlighted ? 2.8 : 1.8}
-                          strokeLinecap="round"
-                          initial={{ pathLength: 0.18, pathOffset: 0, opacity: isHighlighted ? 0.95 : 0.55 }}
-                          animate={{ pathOffset: [0, 1] }}
-                          transition={{
-                            duration: isHighlighted ? 2.6 : 3.8,
-                            repeat: Infinity,
-                            ease: "linear",
-                          }}
+                          strokeOpacity={isHighlighted ? 0.6 : 0.2}
+                          strokeWidth={isHighlighted ? 2 / zoom : 1 / zoom}
+                          strokeDasharray="4 4"
                         />
-                      )}
-                    </g>
-                  );
-                })}
-              </g>
-
-              {/* Interactive Regional Hub Nodes */}
-              <g>
-                {visibleHubs.map((hub) => {
-                  const isSelected = activeHub.id === hub.id;
-                  const colors = riskColorClasses(hub.effectiveRisk);
-
-                  return (
-                    <g
-                      key={hub.id}
-                      transform={`translate(${hub.x}, ${hub.y})`}
-                      onClick={() => setSelectedHubId(hub.id)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter" || e.key === " ") {
-                          e.preventDefault();
-                          setSelectedHubId(hub.id);
-                        }
-                      }}
-                      tabIndex={0}
-                      role="button"
-                      aria-label={`${hub.name} (${hub.effectiveRisk} risk, threat index ${hub.effectiveScore})`}
-                      aria-pressed={isSelected}
-                      className="cursor-pointer focus:outline-none"
-                    >
-                      {/* Outer pulse ring */}
-                      {animateMap && (
-                        <motion.circle
-                          r={isSelected ? 22 : 16}
-                          fill="none"
-                          stroke={colors.dot}
-                          strokeWidth={isSelected ? 2 : 1.5}
-                          initial={{ scale: 0.65, opacity: 0.85 }}
-                          animate={{ scale: 1.55, opacity: 0 }}
-                          transition={{
-                            duration: isSelected ? 1.8 : 2.6,
-                            repeat: Infinity,
-                            ease: "easeOut",
-                          }}
-                        />
-                      )}
-
-                      {/* Selection halo */}
-                      {isSelected && (
-                        <circle
-                          r="15"
-                          fill={colors.glow}
-                          stroke={colors.dot}
-                          strokeWidth="1.5"
-                          strokeDasharray="3 2"
-                        />
-                      )}
-
-                      {/* Core node */}
-                      <circle
-                        r={isSelected ? 7.5 : 6}
-                        fill={colors.dot}
-                        stroke="#020617"
-                        strokeWidth="2"
-                      />
-
-                      {/* Compact HUD label */}
-                      <g transform="translate(0, -14)">
-                        <rect
-                          x="-34"
-                          y="-14"
-                          width="68"
-                          height="16"
-                          rx="4"
-                          fill={isSelected ? "rgba(15, 23, 42, 0.95)" : "rgba(15, 23, 42, 0.78)"}
-                          stroke={isSelected ? colors.dot : "rgba(148, 163, 184, 0.3)"}
-                          strokeWidth={isSelected ? "1.2" : "0.8"}
-                        />
-                        <text
-                          x="0"
-                          y="-3"
-                          textAnchor="middle"
-                          fill={isSelected ? "#f8fafc" : "#cbd5e1"}
-                          fontSize="9.5"
-                          fontFamily="monospace"
-                          fontWeight="700"
-                        >
-                          {hub.shortCode}
-                        </text>
+                        {animateMap && (
+                          <motion.path
+                            d={pathD}
+                            fill="none"
+                            stroke={colors.dot}
+                            strokeWidth={isHighlighted ? 2.5 / zoom : 1.5 / zoom}
+                            strokeLinecap="round"
+                            initial={{ pathLength: 0.16, pathOffset: 0, opacity: isHighlighted ? 0.95 : 0.55 }}
+                            animate={{ pathOffset: [0, 1] }}
+                            transition={{
+                              duration: isHighlighted ? 2.4 : 3.6,
+                              repeat: Infinity,
+                              ease: "linear",
+                            }}
+                          />
+                        )}
                       </g>
-                    </g>
-                  );
-                })}
+                    );
+                  })}
+                </g>
+
+                {/* Interactive Regional Telemetry Hub Nodes */}
+                <g id="hubs-layer">
+                  {visibleHubs.map((hub) => {
+                    const isSelected = activeHub.id === hub.id;
+                    const colors = riskColorClasses(hub.effectiveRisk);
+
+                    return (
+                      <g
+                        key={hub.id}
+                        transform={`translate(${hub.x}, ${hub.y})`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setSelectedHubId(hub.id);
+                        }}
+                        className="cursor-pointer focus:outline-none"
+                        tabIndex={0}
+                        role="button"
+                        aria-label={`${hub.name} node (${hub.effectiveRisk})`}
+                      >
+                        {/* Outer Pulse Ring */}
+                        {animateMap && (
+                          <motion.circle
+                            r={isSelected ? 18 / zoom : 13 / zoom}
+                            fill="none"
+                            stroke={colors.dot}
+                            strokeWidth={isSelected ? 1.8 / zoom : 1.2 / zoom}
+                            initial={{ scale: 0.7, opacity: 0.85 }}
+                            animate={{ scale: 1.5, opacity: 0 }}
+                            transition={{
+                              duration: isSelected ? 1.8 : 2.6,
+                              repeat: Infinity,
+                              ease: "easeOut",
+                            }}
+                          />
+                        )}
+
+                        {/* Selection Halo */}
+                        {isSelected && (
+                          <circle
+                            r={13 / zoom}
+                            fill={colors.glow}
+                            stroke={colors.dot}
+                            strokeWidth={1.2 / zoom}
+                            strokeDasharray="3 2"
+                          />
+                        )}
+
+                        {/* Core Node Circle */}
+                        <circle
+                          r={isSelected ? 6 / zoom : 4.5 / zoom}
+                          fill={colors.dot}
+                          stroke="#030712"
+                          strokeWidth={1.8 / zoom}
+                        />
+
+                        {/* HUD Node Label Badge */}
+                        <g transform={`translate(0, ${-12 / zoom}) scale(${1 / zoom})`}>
+                          <rect
+                            x="-28"
+                            y="-11"
+                            width="56"
+                            height="14"
+                            rx="3"
+                            fill={isSelected ? "rgba(3, 7, 18, 0.95)" : "rgba(3, 7, 18, 0.8)"}
+                            stroke={isSelected ? colors.dot : "rgba(148, 163, 184, 0.4)"}
+                            strokeWidth={isSelected ? "1.2" : "0.75"}
+                          />
+                          <text
+                            x="0"
+                            y="-1.5"
+                            textAnchor="middle"
+                            fill={isSelected ? "#ffffff" : "#cbd5e1"}
+                            fontSize="8"
+                            fontFamily="monospace"
+                            fontWeight="700"
+                          >
+                            {hub.shortCode}
+                          </text>
+                        </g>
+                      </g>
+                    );
+                  })}
+                </g>
               </g>
             </svg>
+
+            {/* Hover Tooltip (Country Info under cursor) */}
+            {hoveredCountry && tooltipPos && (
+              <div
+                className="pointer-events-none absolute z-20 -translate-x-1/2 -translate-y-full rounded-md border border-cyan-500/40 bg-slate-950/95 px-2.5 py-1 text-xs text-white shadow-lg backdrop-blur-xs font-mono"
+                style={{
+                  left: tooltipPos.x,
+                  top: tooltipPos.y - 12,
+                }}
+              >
+                <div className="flex items-center gap-1.5 font-bold text-cyan-300">
+                  <Globe2 className="size-3 text-cyan-400" />
+                  <span>{hoveredCountry.name}</span>
+                </div>
+                <span className="text-[10px] text-slate-400">Click to view territory telemetry</span>
+              </div>
+            )}
+
+            {/* Floating Map Zoom / Pan Controls */}
+            <div className="absolute right-3 top-3 z-10 flex flex-col items-center gap-1.5 rounded-lg border border-border/80 bg-slate-950/85 p-1 backdrop-blur-xs shadow-md">
+              <button
+                type="button"
+                onClick={handleZoomIn}
+                title="Zoom in"
+                className="flex size-7 items-center justify-center rounded text-slate-300 hover:bg-slate-800 hover:text-white transition-colors cursor-pointer"
+              >
+                <Plus className="size-3.5" />
+              </button>
+              <button
+                type="button"
+                onClick={handleZoomOut}
+                title="Zoom out"
+                className="flex size-7 items-center justify-center rounded text-slate-300 hover:bg-slate-800 hover:text-white transition-colors cursor-pointer"
+              >
+                <Minus className="size-3.5" />
+              </button>
+              <div className="h-px w-4 bg-slate-800 my-0.5" />
+              <button
+                type="button"
+                onClick={handleResetView}
+                title="Reset map view"
+                className="flex size-7 items-center justify-center rounded text-slate-300 hover:bg-slate-800 hover:text-white transition-colors cursor-pointer"
+              >
+                <RotateCcw className="size-3.5" />
+              </button>
+            </div>
+
+            {/* Zoom Indicator Pill */}
+            <div className="absolute left-3 top-3 z-10 rounded border border-slate-800 bg-slate-950/80 px-2 py-0.5 font-mono text-[10px] text-slate-400 backdrop-blur-xs">
+              SCALE {zoom.toFixed(1)}x
+            </div>
 
             {/* Bottom Overlay Telemetry Bar */}
             <div className="pointer-events-none absolute inset-x-2.5 bottom-2.5 flex flex-wrap items-center justify-between gap-2 rounded-md border border-slate-800/90 bg-slate-950/85 px-3 py-1.5 text-[11px] text-slate-300 backdrop-blur-xs">
               <span className="flex items-center gap-1.5 font-mono">
                 <Activity className="size-3.5 text-sky-400" />
                 Active Corridors: <strong className="text-white">{visibleCorridors.length}</strong>
+              </span>
+              <span className="font-mono text-[10px] text-slate-400 hidden sm:inline">
+                Natural Earth 1:110m Boundaries • 177 Sovereign Territories
               </span>
               <span className="font-mono">
                 Workspace Scams Mapped:{" "}
@@ -627,7 +848,7 @@ export function GlobalThreatMap({ records }: { records: ScanRecord[] }) {
                   type="button"
                   onClick={() => setSelectedHubId(hub.id)}
                   className={cn(
-                    "inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-medium transition-colors",
+                    "inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-medium transition-colors cursor-pointer",
                     isSelected
                       ? "border-primary/50 bg-primary/15 text-foreground shadow-2xs"
                       : "border-border bg-card/60 text-muted-foreground hover:border-primary/30 hover:text-foreground"
@@ -642,9 +863,60 @@ export function GlobalThreatMap({ records }: { records: ScanRecord[] }) {
           </div>
         </div>
 
-        {/* Right: Regional Threat Intelligence Inspector */}
+        {/* Right: Regional & Country Threat Intelligence Inspector */}
         <div className="flex flex-col justify-between rounded-xl border border-border bg-secondary/20 p-4 sm:p-5">
           <div className="space-y-4">
+            {/* Country Inspection Banner when a country is selected */}
+            {selectedCountry ? (
+              <div className="rounded-xl border border-cyan-500/40 bg-slate-950/70 p-3.5 space-y-2.5">
+                <div className="flex items-start justify-between gap-2 border-b border-slate-800 pb-2.5">
+                  <div>
+                    <span className="font-mono text-[10px] font-semibold uppercase tracking-wider text-cyan-400">
+                      SELECTED TERRITORY
+                    </span>
+                    <h4 className="text-base font-bold text-white mt-0.5">{selectedCountry.name}</h4>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedCountry(null)}
+                    className="rounded p-1 text-slate-400 hover:bg-slate-800 hover:text-white transition-colors cursor-pointer"
+                    title="Close country inspector"
+                  >
+                    <X className="size-4" />
+                  </button>
+                </div>
+
+                {/* Separation of Workspace vs Global Intelligence */}
+                <div className="space-y-2 text-xs">
+                  <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-2.5">
+                    <span className="font-semibold text-slate-300 block mb-1">
+                      A. Workspace Scan Correlation
+                    </span>
+                    {countryWorkspaceMatches.length > 0 ? (
+                      <p className="text-cyan-300 font-mono text-[11px]">
+                        ✓ {countryWorkspaceMatches.length} detected scan(s) in local history contain keywords associated with {selectedCountry.name}.
+                      </p>
+                    ) : (
+                      <p className="text-slate-400 text-[11px]">
+                        No scans in this workspace currently reference {selectedCountry.name}. Scans logged via Message or URL Analyzer will automatically correlate here.
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 p-2.5 text-amber-200/90">
+                    <span className="font-semibold text-amber-300 block mb-1 flex items-center gap-1.5">
+                      <Info className="size-3.5 text-amber-400" />
+                      B. External Threat Feed Status
+                    </span>
+                    <p className="text-[11px] leading-relaxed text-slate-300">
+                      Global threat intelligence feed not connected. SCAMLENS displays accurate geographical boundaries without synthesizing fake external national cyberattack counts.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            ) : null}
+
+            {/* Regional Hub Inspector Header */}
             <div className="flex items-start justify-between gap-3 border-b border-border pb-3.5">
               <div>
                 <div className="flex items-center gap-2">
@@ -672,7 +944,7 @@ export function GlobalThreatMap({ records }: { records: ScanRecord[] }) {
                   {activeHub.effectiveRisk}
                 </span>
                 <p className="mt-1.5 font-mono text-xs text-muted-foreground">
-                  Threat Index: <strong className="text-foreground">{activeHub.effectiveScore}/100</strong>
+                  Regional Index: <strong className="text-foreground">{activeHub.effectiveScore}/100</strong>
                 </p>
               </div>
             </div>
@@ -716,8 +988,8 @@ export function GlobalThreatMap({ records }: { records: ScanRecord[] }) {
           <div className="mt-5 flex flex-wrap items-center justify-between gap-2 border-t border-border pt-3.5">
             <span className="text-[11px] text-muted-foreground">
               {totalWorkspaceScams > 0
-                ? `Correlated with ${totalWorkspaceScams} detected scam/phishing scan${totalWorkspaceScams === 1 ? "" : "s"} in history.`
-                : "Showing baseline regional scam intelligence. Run a scan to correlate live hits."}
+                ? `Correlated with ${totalWorkspaceScams} detected scam scan${totalWorkspaceScams === 1 ? "" : "s"} in workspace.`
+                : "Showing regional heuristic signatures. Perform scans to correlate live hits."}
             </span>
             <Button asChild size="sm" variant="outline" className="min-h-8 text-xs">
               <Link to={activeHub.sampleAction.to}>
@@ -729,5 +1001,13 @@ export function GlobalThreatMap({ records }: { records: ScanRecord[] }) {
         </div>
       </div>
     </Panel>
+  );
+}
+
+export function GlobalThreatMap({ records = [] }: { records?: ScanRecord[] }) {
+  return (
+    <MapErrorBoundary>
+      <GlobalThreatMapInner records={records} />
+    </MapErrorBoundary>
   );
 }
